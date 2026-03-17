@@ -3,3 +3,6 @@ checkpoints/*
 utils/__pycache__/
 
 experiments
+
+runs2/
+*.tfevents.*

@@ -56,17 +56,16 @@ Clone and setup environment:
 
 ## Usage
 
-Train SAC agent (recommended):
+Train and eval SAC agent (recommended):
 
     python3 main_sac.py
+    python3 eval_sac.py
 
-Train DDPG agent (baseline):
+Train and eval DDPG agent (baseline):
 
     python3 main.py
-
-Evaluate trained model:
-
     python3 eval.py
+    
 
 ## Repository Structure
 
