@@ -16,10 +16,10 @@ _FRAME_SKIP    = 5   # physics steps per control step: 5 * 0.005s = 25ms
 _ACTION_REPEAT = 8   # control steps per policy step:  8 * 25ms   = 200ms
 
 _CTRL_COST_WEIGHT   = 0.01
-_SMOOTH_WEIGHT      = 0.5   # penalty for large changes between consecutive actions
-_FORWARD_WEIGHT     = 3.0
-_ALIVE_BONUS        = 1.0
-_UPRIGHT_WEIGHT     = 3.0
+_SMOOTH_WEIGHT      = 0.0   # no smoothness penalty — 50ms step is naturally smooth
+_FORWARD_WEIGHT     = 4.0
+_ALIVE_BONUS        = 0.8 # alive bonus may be rewarding the standing stance
+_UPRIGHT_WEIGHT     = 2.5
 _FALL_PENALTY       = -50.0
 
 
