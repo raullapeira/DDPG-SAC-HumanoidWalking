@@ -20,6 +20,7 @@ _SMOOTH_WEIGHT      = 0.0
 _FORWARD_WEIGHT     = 5.0
 _ALIVE_BONUS        = 0.8
 _UPRIGHT_WEIGHT     = 0.3   # low — upright alone should not sustain positive reward
+_LATERAL_COST_WEIGHT = 1.0  # penalty for y-velocity (discourages oblique stepping)
 _FALL_PENALTY       = -50.0
 
 
@@ -123,17 +124,19 @@ class AlphaEnv(gym.Env):
         terminated = bool(root_z < _FALL_Z or up_z < _TILT_Z)
 
         x_velocity     = self.data.qvel[0]
+        y_velocity     = self.data.qvel[1]
         v_clipped      = np.clip(x_velocity, 0.0, 0.5)
         forward_reward = _FORWARD_WEIGHT * v_clipped * up_z
         alive_bonus    = _ALIVE_BONUS
         upright_reward = _UPRIGHT_WEIGHT * up_z
         ctrl_cost      = _CTRL_COST_WEIGHT * np.sum(np.square(action))
         smooth_cost    = _SMOOTH_WEIGHT * np.sum(np.square(action - self._prev_action))
+        lateral_cost   = _LATERAL_COST_WEIGHT * y_velocity ** 2
         fall_penalty   = _FALL_PENALTY if terminated else 0.0
-        slow_penalty   = -4.0 if x_velocity < 0.02 else 0.0
+        slow_penalty   = -2.0 if x_velocity < 0.02 else 0.0
 
         reward = (forward_reward + alive_bonus + upright_reward
-                  - ctrl_cost - smooth_cost + fall_penalty + slow_penalty)
+                  - ctrl_cost - smooth_cost - lateral_cost + fall_penalty + slow_penalty)
 
         self._prev_action = action.copy()
 
