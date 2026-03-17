@@ -16,8 +16,7 @@ import gymnasium as gym
 import mujoco
 from envs.alpha_env import AlphaEnv
 
-SECONDS = 6
-FPS     = 30
+SECONDS = 10
 WIDTH   = 640
 HEIGHT  = 480
 DEVICE  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -73,31 +72,34 @@ def main():
     cam.azimuth   = 150
     cam.elevation = -18
 
-    env_steps_per_frame = max(1, round(40 / FPS))
-    n_frames = SECONDS * FPS
+    from envs.alpha_env import _FRAME_SKIP, _ACTION_REPEAT
+    step_ms = _FRAME_SKIP * _ACTION_REPEAT * 5   # ms per policy step (5ms timestep)
+    gif_fps = round(1000 / step_ms)              # real-time fps: 1000/200 = 5fps
+    n_frames = SECONDS * gif_fps                 # 1 frame per policy step
 
     obs, _ = env.reset(seed=0)
     frames = []
     ep = 1
+    move = 0  # movement counter (each = one 200ms policy step)
 
     for _ in range(n_frames):
-        for _ in range(env_steps_per_frame):
-            st = torch.FloatTensor(obs).unsqueeze(0).to(DEVICE)
-            action = actor.act(st).cpu().numpy()[0]
-            obs, r, term, trunc, info = env.step(action)
-            if term or trunc:
-                obs, _ = env.reset(seed=ep)
-                ep += 1
+        st = torch.FloatTensor(obs).unsqueeze(0).to(DEVICE)
+        action = actor.act(st).cpu().numpy()[0]
+        obs, r, term, trunc, info = env.step(action)
+        move += 1
+        if term or trunc:
+            obs, _ = env.reset(seed=ep)
+            ep += 1
+            move = 0
 
         renderer.update_scene(env.unwrapped.data, camera=cam)
         frame = renderer.render().copy()
-        label = (f"Step {args.step:,}  |  ep {ep}"
-                 f"  |  x_vel {info['x_velocity']:+.2f} m/s"
-                 f"  |  up {info['torso_up_z']:.2f}")
+        label = (f"Train {args.step:,}  |  ep {ep}  |  move {move} ({move*step_ms}ms)"
+                 f"  |  x_vel {info['x_velocity']:+.2f}  |  up {info['torso_up_z']:.2f}")
         frames.append(add_label(frame, label))
 
     env.close()
-    imageio.mimsave(out_gif, frames, fps=FPS, loop=0)
+    imageio.mimsave(out_gif, frames, fps=gif_fps, loop=0)
     print(f"GIF saved -> {out_gif}", flush=True)
 
 

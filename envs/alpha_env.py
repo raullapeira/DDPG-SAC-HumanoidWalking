@@ -16,10 +16,10 @@ _FRAME_SKIP    = 5   # physics steps per control step: 5 * 0.005s = 25ms
 _ACTION_REPEAT = 8   # control steps per policy step:  8 * 25ms   = 200ms
 
 _CTRL_COST_WEIGHT   = 0.01
-_SMOOTH_WEIGHT      = 0.0   # no smoothness penalty — 50ms step is naturally smooth
-_FORWARD_WEIGHT     = 4.0
-_ALIVE_BONUS        = 0.8 # alive bonus may be rewarding the standing stance
-_UPRIGHT_WEIGHT     = 2.5
+_SMOOTH_WEIGHT      = 0.0
+_FORWARD_WEIGHT     = 5.0
+_ALIVE_BONUS        = 0.8
+_UPRIGHT_WEIGHT     = 0.3   # low — upright alone should not sustain positive reward
 _FALL_PENALTY       = -50.0
 
 
@@ -130,7 +130,7 @@ class AlphaEnv(gym.Env):
         ctrl_cost      = _CTRL_COST_WEIGHT * np.sum(np.square(action))
         smooth_cost    = _SMOOTH_WEIGHT * np.sum(np.square(action - self._prev_action))
         fall_penalty   = _FALL_PENALTY if terminated else 0.0
-        slow_penalty   = -1.0 if x_velocity < 0.02 else 0.0
+        slow_penalty   = -4.0 if x_velocity < 0.02 else 0.0
 
         reward = (forward_reward + alive_bonus + upright_reward
                   - ctrl_cost - smooth_cost + fall_penalty + slow_penalty)
