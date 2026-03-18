@@ -125,15 +125,16 @@ class AlphaEnv(gym.Env):
 
         x_velocity     = self.data.qvel[0]
         y_velocity     = self.data.qvel[1]
-        v_clipped      = np.clip(x_velocity, 0.0, 1.0)
-        forward_reward = _FORWARD_WEIGHT * v_clipped * (up_z ** 2)
+        target_speed   = 0.3
+        forward_reward = _FORWARD_WEIGHT * np.exp(-((x_velocity - target_speed) ** 2))
+        forward_reward *= (up_z ** 2)
         alive_bonus    = _ALIVE_BONUS
         upright_reward = _UPRIGHT_WEIGHT * up_z
         ctrl_cost      = _CTRL_COST_WEIGHT * np.sum(np.square(action))
         smooth_cost    = _SMOOTH_WEIGHT * np.sum(np.square(action - self._prev_action))
         lateral_cost   = _LATERAL_COST_WEIGHT * y_velocity ** 2
         fall_penalty   = _FALL_PENALTY if terminated else 0.0
-        slow_penalty   = -2.0 if x_velocity < 0.02 else 0.0
+        slow_penalty   = -1.0 * np.exp(-10.0 * x_velocity)  # 0 m/s→-1.0, 0.3 m/s→-0.05, 0.5 m/s→-0.007
 
         reward = (forward_reward + alive_bonus + upright_reward
                   - ctrl_cost - smooth_cost - lateral_cost + fall_penalty + slow_penalty)
