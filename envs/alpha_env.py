@@ -17,10 +17,10 @@ _ACTION_REPEAT = 8   # control steps per policy step:  8 * 25ms   = 200ms
 
 _CTRL_COST_WEIGHT   = 0.01
 _SMOOTH_WEIGHT      = 0.0
-_FORWARD_WEIGHT     = 5.0
+_FORWARD_WEIGHT     = 7.0
 _ALIVE_BONUS        = 0.8
-_UPRIGHT_WEIGHT     = 0.3   # low — upright alone should not sustain positive reward
-_LATERAL_COST_WEIGHT = 1.0  # penalty for y-velocity (discourages oblique stepping)
+_UPRIGHT_WEIGHT     = 0.3
+_LATERAL_COST_WEIGHT = 0.3  # reduced — allows natural hip swing for larger steps
 _FALL_PENALTY       = -50.0
 
 
@@ -125,7 +125,7 @@ class AlphaEnv(gym.Env):
 
         x_velocity     = self.data.qvel[0]
         y_velocity     = self.data.qvel[1]
-        v_clipped      = np.clip(x_velocity, 0.0, 0.5)
+        v_clipped      = np.clip(x_velocity, 0.0, 1.0)
         forward_reward = _FORWARD_WEIGHT * v_clipped * up_z
         alive_bonus    = _ALIVE_BONUS
         upright_reward = _UPRIGHT_WEIGHT * up_z
