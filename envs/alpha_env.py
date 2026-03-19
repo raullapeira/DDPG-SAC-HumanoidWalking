@@ -17,10 +17,11 @@ _ACTION_REPEAT = 8   # control steps per policy step:  8 * 25ms   = 200ms
 
 _CTRL_COST_WEIGHT   = 0.01
 _SMOOTH_WEIGHT      = 0.0
-_FORWARD_WEIGHT     = 7.0
+_FORWARD_WEIGHT     = 5.0
 _ALIVE_BONUS        = 0.8
-_UPRIGHT_WEIGHT     = 0.3
-_LATERAL_COST_WEIGHT = 0.8  # allows hip swing, discourages crab-walk
+_UPRIGHT_WEIGHT     = 0.3   # low — upright alone should not sustain positive reward
+_LATERAL_COST_WEIGHT = 0.3  # reduced to allow natural hip swing
+_YAW_COST_WEIGHT    = 1.0  # penalty for torso rotation (discourages spinning)
 _FALL_PENALTY       = -50.0
 
 
@@ -125,19 +126,20 @@ class AlphaEnv(gym.Env):
 
         x_velocity     = self.data.qvel[0]
         y_velocity     = self.data.qvel[1]
-        target_speed   = 0.3
-        forward_reward = _FORWARD_WEIGHT * np.exp(-((x_velocity - target_speed) ** 2))
-        forward_reward *= (up_z ** 2)
+        v_clipped      = np.clip(x_velocity, 0.0, 0.5)
+        forward_reward = _FORWARD_WEIGHT * v_clipped * up_z
         alive_bonus    = _ALIVE_BONUS
         upright_reward = _UPRIGHT_WEIGHT * up_z
         ctrl_cost      = _CTRL_COST_WEIGHT * np.sum(np.square(action))
         smooth_cost    = _SMOOTH_WEIGHT * np.sum(np.square(action - self._prev_action))
         lateral_cost   = _LATERAL_COST_WEIGHT * y_velocity ** 2
+        yaw_rate       = self.data.qvel[5]
+        yaw_cost       = _YAW_COST_WEIGHT * yaw_rate ** 2
         fall_penalty   = _FALL_PENALTY if terminated else 0.0
-        slow_penalty   = -1.0 * np.exp(-10.0 * x_velocity)  # 0 m/s→-1.0, 0.3 m/s→-0.05, 0.5 m/s→-0.007
+        slow_penalty   = -2.0 if x_velocity < 0.02 else 0.0
 
         reward = (forward_reward + alive_bonus + upright_reward
-                  - ctrl_cost - smooth_cost - lateral_cost + fall_penalty + slow_penalty)
+                  - ctrl_cost - smooth_cost - lateral_cost - yaw_cost + fall_penalty + slow_penalty)
 
         self._prev_action = action.copy()
 
