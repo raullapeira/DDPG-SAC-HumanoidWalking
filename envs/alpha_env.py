@@ -22,7 +22,8 @@ _ALIVE_BONUS        = 0.8
 _UPRIGHT_WEIGHT     = 0.3   # low — upright alone should not sustain positive reward
 _LATERAL_COST_WEIGHT = 0.3  # reduced to allow natural hip swing
 _YAW_COST_WEIGHT    = 1.0  # penalty for torso rotation (discourages spinning)
-_FALL_PENALTY       = -50.0
+_FOOT_HEIGHT_WEIGHT = 2.0  # rewards lifting a foot (forces weight transfer to support leg)
+_FALL_PENALTY       = -10.0
 
 
 class AlphaEnv(gym.Env):
@@ -79,6 +80,8 @@ class AlphaEnv(gym.Env):
 
         self._prev_action = np.zeros(n_act, dtype=np.float32)
         self._renderer = None
+        self._left_leg_id  = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "Left_Leg_Link")
+        self._right_leg_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "Right_Leg_link")
 
     def _get_obs(self):
         qpos = self.data.qpos.flat.copy()
@@ -135,10 +138,13 @@ class AlphaEnv(gym.Env):
         lateral_cost   = _LATERAL_COST_WEIGHT * y_velocity ** 2
         yaw_rate       = self.data.qvel[5]
         yaw_cost       = _YAW_COST_WEIGHT * yaw_rate ** 2
+        left_z         = self.data.xpos[self._left_leg_id, 2]
+        right_z        = self.data.xpos[self._right_leg_id, 2]
+        foot_height_reward = _FOOT_HEIGHT_WEIGHT * max(0.0, max(left_z, right_z) - 0.05)
         fall_penalty   = _FALL_PENALTY if terminated else 0.0
         slow_penalty   = -2.0 if x_velocity < 0.02 else 0.0
 
-        reward = (forward_reward + alive_bonus + upright_reward
+        reward = (forward_reward + alive_bonus + upright_reward + foot_height_reward
                   - ctrl_cost - smooth_cost - lateral_cost - yaw_cost + fall_penalty + slow_penalty)
 
         self._prev_action = action.copy()
