@@ -16,6 +16,16 @@ from torch.utils.tensorboard import SummaryWriter
 from envs.alpha_env import AlphaEnv
 import subprocess
 
+import csv
+
+_CSV_PATH = os.path.join(_HERE, "training_log.csv")
+
+# Crear archivo con cabecera si no existe
+if not os.path.exists(_CSV_PATH):
+    with open(_CSV_PATH, mode="w", newline="") as f:
+        writer_csv = csv.writer(f)
+        writer_csv.writerow(["step", "episode", "reward"])
+
 LEARNING_RATE = 3e-4  # Learning rate for all optimizers
 GAMMA = 0.99  # Discount factor for future rewards
 TAU = 0.005  # Soft update rate for target critic
@@ -241,6 +251,11 @@ while global_step < TOTAL_TIMESTEPS:
     # Log episode reward
     writer.add_scalar("Reward/episode", episode_reward, global_step)
     print(f"Episode {episode}, Reward: {episode_reward:.2f}, Step: {global_step}")
+
+    with open(_CSV_PATH, mode="a", newline="") as f:
+        writer_csv = csv.writer(f)
+        writer_csv.writerow([global_step, episode, episode_reward])
+        
     episode += 1
 
 # Clean up
