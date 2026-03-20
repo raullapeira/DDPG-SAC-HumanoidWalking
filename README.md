@@ -65,7 +65,6 @@ Train and eval DDPG agent (baseline):
 
     python3 main.py
     python3 eval.py
-    
 
 ## Repository Structure
 
