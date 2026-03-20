@@ -17,7 +17,7 @@ import gymnasium as gym
 import mujoco
 from envs.alpha_env import AlphaEnv, _FRAME_SKIP, _ACTION_REPEAT
 
-SECONDS    = 15
+SECONDS    = 120
 WIDTH      = 640
 HEIGHT     = 480
 DEVICE     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -146,6 +146,8 @@ def main():
             for _ in range(_FRAME_SKIP):
                 mujoco.mj_step(raw_env.model, raw_env_data)
 
+            cam.lookat[0] = float(raw_env_data.qpos[0])  # follow robot in X
+            cam.lookat[1] = float(raw_env_data.qpos[1])  # follow robot in Y
             renderer.update_scene(raw_env_data, camera=cam)
             frame_rgb = renderer.render().copy()
             frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)

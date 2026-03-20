@@ -21,7 +21,7 @@ _FORWARD_WEIGHT     = 7.0
 _ALIVE_BONUS        = 0.8
 _UPRIGHT_WEIGHT     = 0.3
 _LATERAL_COST_WEIGHT = 0.8  # allows hip swing, discourages crab-walk
-_FALL_PENALTY       = -50.0
+_FALL_PENALTY       = -5.0
 
 
 class AlphaEnv(gym.Env):
