@@ -19,11 +19,9 @@ _CTRL_COST_WEIGHT   = 0.01
 _SMOOTH_WEIGHT      = 0.0
 _FORWARD_WEIGHT     = 5.0
 _ALIVE_BONUS        = 0.8
-_UPRIGHT_WEIGHT     = 0.3   # low — upright alone should not sustain positive reward
-_LATERAL_COST_WEIGHT = 0.3  # reduced to allow natural hip swing
-_YAW_COST_WEIGHT    = 1.0  # penalty for torso rotation (discourages spinning)
-_FOOT_HEIGHT_WEIGHT = 2.0  # rewards lifting a foot (forces weight transfer to support leg)
-_FALL_PENALTY       = -10.0
+_UPRIGHT_WEIGHT     = 0.3
+_LATERAL_COST_WEIGHT = 0.8  # allows hip swing, discourages crab-walk
+_FALL_PENALTY       = -5.0
 
 
 class AlphaEnv(gym.Env):
