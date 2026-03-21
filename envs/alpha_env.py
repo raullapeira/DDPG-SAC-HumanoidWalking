@@ -23,6 +23,7 @@ _UPRIGHT_WEIGHT     = 0.3
 _LATERAL_COST_WEIGHT = 0.8  # allows hip swing, discourages crab-walk
 _YAW_COST_WEIGHT     = 1.0  # penalty for torso rotation
 _FOOT_HEIGHT_WEIGHT  = 2.0  # rewards lifting a foot (forces weight transfer to support leg)
+_STANCE_PENALTY      = -1.0  # penalty when both feet are on the ground
 _FALL_PENALTY       = -5.0
 
 
@@ -141,11 +142,13 @@ class AlphaEnv(gym.Env):
         left_z         = self.data.xpos[self._left_leg_id, 2]
         right_z        = self.data.xpos[self._right_leg_id, 2]
         foot_height_reward = _FOOT_HEIGHT_WEIGHT * max(0.0, max(left_z, right_z) - 0.06)
+        stance_penalty = _STANCE_PENALTY if (left_z < 0.06 and right_z < 0.06) else 0.0
         fall_penalty   = _FALL_PENALTY if terminated else 0.0
         slow_penalty   = -2.0 if x_velocity < 0.02 else 0.0
 
         reward = (forward_reward + alive_bonus + upright_reward + foot_height_reward
-                  - ctrl_cost - smooth_cost - lateral_cost - yaw_cost + fall_penalty + slow_penalty)
+                  - ctrl_cost - smooth_cost - lateral_cost - yaw_cost
+                  + stance_penalty + fall_penalty + slow_penalty)
 
         self._prev_action = action.copy()
 
