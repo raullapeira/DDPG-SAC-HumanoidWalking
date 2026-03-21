@@ -21,7 +21,8 @@ _FORWARD_WEIGHT     = 5.0
 _ALIVE_BONUS        = 0.8
 _UPRIGHT_WEIGHT     = 0.3
 _LATERAL_COST_WEIGHT = 0.8  # allows hip swing, discourages crab-walk
-_FOOT_HEIGHT_WEIGHT  = 3.0  # higher threshold forces more foot clearance
+_YAW_COST_WEIGHT     = 1.0  # penalty for torso rotation
+_FOOT_HEIGHT_WEIGHT  = 2.0  # rewards lifting a foot (forces weight transfer to support leg)
 _FALL_PENALTY       = -5.0
 
 
@@ -139,7 +140,7 @@ class AlphaEnv(gym.Env):
         yaw_cost       = _YAW_COST_WEIGHT * yaw_rate ** 2
         left_z         = self.data.xpos[self._left_leg_id, 2]
         right_z        = self.data.xpos[self._right_leg_id, 2]
-        foot_height_reward = _FOOT_HEIGHT_WEIGHT * max(0.0, max(left_z, right_z) - 0.08)
+        foot_height_reward = _FOOT_HEIGHT_WEIGHT * max(0.0, max(left_z, right_z) - 0.06)
         fall_penalty   = _FALL_PENALTY if terminated else 0.0
         slow_penalty   = -2.0 if x_velocity < 0.02 else 0.0
 
