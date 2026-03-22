@@ -22,9 +22,9 @@ _ALIVE_BONUS        = 0.8
 _UPRIGHT_WEIGHT     = 0.3
 _LATERAL_COST_WEIGHT = 0.8  # allows hip swing, discourages crab-walk
 _YAW_COST_WEIGHT     = 1.0  # penalty for torso rotation
-_FOOT_HEIGHT_WEIGHT  = 2.0  # rewards lifting a foot (forces weight transfer to support leg)
+_FOOT_HEIGHT_WEIGHT  = 3.0  # rewards lifting a foot (forces weight transfer to support leg)
 _STANCE_PENALTY      = -1.0  # penalty when both feet are on the ground
-_FALL_PENALTY       = -5.0
+_FALL_PENALTY       = 0.0
 
 
 class AlphaEnv(gym.Env):
