@@ -9,51 +9,26 @@ _XML_PATH = os.path.join(
 )
 
 _INIT_Z = 0.298
-_FALL_Z = 0.12       # terminate if root drops below this height
-_TILT_Z = 0.7        # terminate if torso tilts > ~45° from vertical (cos threshold)
+_FALL_Z = 0.12
+_TILT_Z = 0.7
 
-_FRAME_SKIP    = 5   # physics steps per control step: 5 * 0.005s = 25ms
-_ACTION_REPEAT = 8   # control steps per policy step:  8 * 25ms   = 200ms
+_FRAME_SKIP    = 5
+_ACTION_REPEAT = 4   # 🔥 antes 8 → ahora 100ms
 
 _CTRL_COST_WEIGHT   = 0.01
-_SMOOTH_WEIGHT      = 0.0
 _FORWARD_WEIGHT     = 5.0
 _ALIVE_BONUS        = 0.8
 _UPRIGHT_WEIGHT     = 0.3
-_LATERAL_COST_WEIGHT = 0.8  # allows hip swing, discourages crab-walk
-_YAW_COST_WEIGHT     = 1.0  # penalty for torso rotation
-_FOOT_HEIGHT_WEIGHT  = 3.0  # rewards lifting a foot (forces weight transfer to support leg)
-_STANCE_PENALTY      = -1.0  # penalty when both feet are on the ground
-_FALL_PENALTY       = 0.0
+_LATERAL_COST_WEIGHT = 0.8
+_YAW_COST_WEIGHT     = 1.0
+
+_FOOT_HEIGHT_WEIGHT  = 3.0
+_PUSH_OFF_WEIGHT     = 2.0   # 🔥 nuevo
+_FRONT_LIFT_PENALTY  = 1.0   # 🔥 nuevo
+_STANCE_PENALTY      = -0.3  # 🔥 suavizado
 
 
 class AlphaEnv(gym.Env):
-    """
-    Single-robot walking environment for the Alpha humanoid.
-
-    Observation (43-dim):
-        qpos[2:]  - root z-height, quaternion (4), 16 joint angles  = 21
-        qvel[:]   - 6 root velocities + 16 joint velocities          = 22
-
-    Action (16-dim):
-        Normalised target joint positions in [-1, 1], centered on the
-        neutral standing pose (all joints at 0), scaled by half the ctrlrange.
-        action=0 maps to joint angle 0 (natural standing).
-
-    Policy step = ACTION_REPEAT * FRAME_SKIP * timestep
-                = 8 * 5 * 0.005s = 200ms
-    Each policy decision maps directly to one servo command on the real robot
-    with 200ms transition duration.
-
-    Reward:
-        forward_vel   - root x-velocity (capped at 0.5 m/s, coupled with up_z)
-        alive_bonus   - constant bonus each step the robot stays up
-        upright       - bonus for keeping torso vertical
-        ctrl_cost     - penalty for large absolute actions
-        smooth_cost   - penalty for large changes between consecutive actions
-        slow_penalty  - penalty for not moving forward
-        fall_penalty  - large one-time penalty on fall/tilt termination
-    """
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 50}
 
@@ -68,8 +43,8 @@ class AlphaEnv(gym.Env):
         self._ctrl_high = self.model.actuator_ctrlrange[:, 1].copy()
         self._ctrl_half = (self._ctrl_high - self._ctrl_low) / 2.0
 
-        n_act = self.model.nu   # 16
-        n_obs = self._get_obs().shape[0]  # 43
+        n_act = self.model.nu
+        n_obs = self._get_obs().shape[0]
 
         self.action_space = spaces.Box(
             low=-1.0, high=1.0, shape=(n_act,), dtype=np.float32
@@ -81,6 +56,7 @@ class AlphaEnv(gym.Env):
 
         self._prev_action = np.zeros(n_act, dtype=np.float32)
         self._renderer = None
+
         self._left_leg_id  = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "Left_Leg_Link")
         self._right_leg_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "Right_Leg_link")
 
@@ -90,11 +66,9 @@ class AlphaEnv(gym.Env):
         return np.concatenate([qpos[2:], qvel]).astype(np.float32)
 
     def _denorm_action(self, action):
-        """Map normalised action [-1,1] centered on neutral pose (q=0)."""
         return np.clip(action * self._ctrl_half, self._ctrl_low, self._ctrl_high)
 
     def _torso_up_z(self):
-        """Z-component of the torso up-vector in world frame from quaternion."""
         qw, qx, qy, qz = self.data.qpos[3:7]
         return 1.0 - 2.0 * (qx * qx + qy * qy)
 
@@ -114,8 +88,6 @@ class AlphaEnv(gym.Env):
     def step(self, action):
         action = np.clip(action, -1.0, 1.0)
 
-        # Hold this action for ACTION_REPEAT control steps (= 200ms total)
-        # Each control step = FRAME_SKIP physics steps (= 25ms)
         for _ in range(_ACTION_REPEAT):
             self.data.ctrl[:] = self._denorm_action(action)
             for _ in range(_FRAME_SKIP):
@@ -128,41 +100,75 @@ class AlphaEnv(gym.Env):
 
         terminated = bool(root_z < _FALL_Z or up_z < _TILT_Z)
 
-        x_velocity     = self.data.qvel[0]
-        y_velocity     = self.data.qvel[1]
-        v_clipped      = np.clip(x_velocity, 0.0, 0.5)
-        forward_reward = _FORWARD_WEIGHT * v_clipped * up_z
+        x_velocity = self.data.qvel[0]
+        y_velocity = self.data.qvel[1]
+
+        # =========================
+        # 🦶 DETECCIÓN DE PIERNAS
+        # =========================
+        left_pos  = self.data.xpos[self._left_leg_id]
+        right_pos = self.data.xpos[self._right_leg_id]
+
+        left_x, left_z   = left_pos[0], left_pos[2]
+        right_x, right_z = right_pos[0], right_pos[2]
+
+        if left_x < right_x:
+            rear_z  = left_z
+            front_z = right_z
+            rear_vx = self.data.cvel[self._left_leg_id][3]
+        else:
+            rear_z  = right_z
+            front_z = left_z
+            rear_vx = self.data.cvel[self._right_leg_id][3]
+
+        # =========================
+        # 🎯 REWARDS
+        # =========================
+        forward_reward = _FORWARD_WEIGHT * max(0.0, x_velocity)
         alive_bonus    = _ALIVE_BONUS
         upright_reward = _UPRIGHT_WEIGHT * up_z
-        ctrl_cost      = _CTRL_COST_WEIGHT * np.sum(np.square(action))
-        smooth_cost    = _SMOOTH_WEIGHT * np.sum(np.square(action - self._prev_action))
-        lateral_cost   = _LATERAL_COST_WEIGHT * y_velocity ** 2
-        yaw_rate       = self.data.qvel[5]
-        yaw_cost       = _YAW_COST_WEIGHT * yaw_rate ** 2
-        left_z         = self.data.xpos[self._left_leg_id, 2]
-        right_z        = self.data.xpos[self._right_leg_id, 2]
-        foot_height_reward = _FOOT_HEIGHT_WEIGHT * max(0.0, max(left_z, right_z) - 0.06)
-        stance_penalty = _STANCE_PENALTY if (left_z < 0.06 and right_z < 0.06) else 0.0
-        fall_penalty   = _FALL_PENALTY if terminated else 0.0
+
+        ctrl_cost    = _CTRL_COST_WEIGHT * np.sum(np.square(action))
+        lateral_cost = _LATERAL_COST_WEIGHT * y_velocity ** 2
+        yaw_cost     = _YAW_COST_WEIGHT * self.data.qvel[5] ** 2
+
+        # 🔥 solo pierna trasera
+        foot_height_reward = _FOOT_HEIGHT_WEIGHT * max(0.0, rear_z - 0.06)
+
+        # 🔥 push-off real
+        push_off_reward = _PUSH_OFF_WEIGHT * max(0.0, -rear_vx)
+
+        # 🔥 penaliza levantar la delantera
+        front_lift_penalty = _FRONT_LIFT_PENALTY * max(0.0, front_z - 0.08)
+
+        # 🔥 stance suave
+        double_support = (left_z < 0.06 and right_z < 0.06)
+        stance_penalty = _STANCE_PENALTY if double_support else 0.0
         slow_penalty   = -2.0 if x_velocity < 0.02 else 0.0
 
-        reward = (forward_reward + alive_bonus + upright_reward + foot_height_reward
-                  - ctrl_cost - smooth_cost - lateral_cost - yaw_cost
-                  + stance_penalty + fall_penalty + slow_penalty)
+        reward = (
+            forward_reward
+            + alive_bonus
+            + upright_reward
+            + foot_height_reward
+            + push_off_reward
+            - ctrl_cost
+            - lateral_cost
+            - yaw_cost
+            - front_lift_penalty
+            + stance_penalty
+            + slow_penalty
+        )
 
         self._prev_action = action.copy()
 
         truncated = False
 
         info = {
-            "x_velocity":      x_velocity,
-            "root_z":          root_z,
-            "torso_up_z":      up_z,
-            "reward_forward":  forward_reward,
-            "reward_survive":  alive_bonus,
-            "reward_upright":  upright_reward,
-            "reward_ctrl":     -ctrl_cost,
-            "reward_smooth":   -smooth_cost,
+            "x_velocity": x_velocity,
+            "rear_z": rear_z,
+            "front_z": front_z,
+            "push_off": push_off_reward,
         }
 
         if self.render_mode == "human":

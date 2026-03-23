@@ -94,8 +94,9 @@ def main():
 
         renderer.update_scene(env.unwrapped.data, camera=cam)
         frame = renderer.render().copy()
+        up_z = env.unwrapped._torso_up_z()
         label = (f"Train {args.step:,}  |  ep {ep}  |  move {move} ({move*step_ms}ms)"
-                 f"  |  x_vel {info['x_velocity']:+.2f}  |  up {info['torso_up_z']:.2f}")
+                 f"  |  x_vel {info['x_velocity']:+.2f}  |  up {up_z:.2f}")
         frames.append(add_label(frame, label))
 
     env.close()
