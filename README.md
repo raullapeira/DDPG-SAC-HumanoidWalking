@@ -28,10 +28,10 @@ Checkpoints saved every 50k steps to `checkpoints/sac_alpha/`. GIFs auto-generat
 
 ```
 # Generate MP4 from a checkpoint
-python eval/export_mp4.py --ckpt checkpoints/sac_alpha/sac2_checkpoint_1000000.pt --step 1000000
+python tools/export_mp4.py --ckpt checkpoints/sac_alpha/sac2_checkpoint_1000000.pt --step 1000000
 
 # Generate GIF
-python eval/make_checkpoint_gif.py --ckpt checkpoints/sac_alpha/sac2_checkpoint_1000000.pt --step 1000000
+python tools/make_checkpoint_gif.py --ckpt checkpoints/sac_alpha/sac2_checkpoint_1000000.pt --step 1000000
 ```
 
 ## Structure
@@ -41,7 +41,7 @@ DDPG-SAC-HumanoidWalking/
 ├── main_sac_alpha1.py       # Training loop
 ├── envs/alpha_env.py        # MuJoCo environment + reward shaping
 ├── robot/alpha_single.xml   # Robot model (16 actuators, kp=20)
-├── eval/
+├── tools/
 │   ├── export_mp4.py        # Smooth MP4 with joint angle bars
 │   └── make_checkpoint_gif.py
 └── media/                   # GIFs and videos per training run
