@@ -17,15 +17,16 @@ import gymnasium as gym
 import mujoco
 from envs.alpha_env import AlphaEnv, _FRAME_SKIP, _ACTION_REPEAT
 
-SECONDS    = 15
+SECONDS    = 120
 WIDTH      = 640
 HEIGHT     = 480
 DEVICE     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Render at every control step (25ms) for smooth transitions
-CTRL_MS    = _FRAME_SKIP * 5                 # 25ms per control step
-POLICY_MS  = _ACTION_REPEAT * CTRL_MS        # 200ms per policy step
-FPS        = round(1000 / CTRL_MS)           # 40fps — smooth real-time playback
+CTRL_MS      = _FRAME_SKIP * 5               # 25ms per control step
+POLICY_MS    = _ACTION_REPEAT * CTRL_MS      # 100ms per policy step
+FPS_RENDER   = round(1000 / CTRL_MS)        # 40fps — rendering rate
+FPS_PLAYBACK = 10                            # 4x slower than real-time for clarity
 
 
 class Actor(nn.Module):
@@ -40,14 +41,14 @@ class Actor(nn.Module):
             return torch.tanh(self.mu(self.net(state))) * self.max_action
 
 
-def draw_overlay(frame_bgr, move, ep, x_vel, up_z, joint_angles, joint_names):
+def draw_overlay(frame_bgr, move, ep, x_vel, up_z, joint_angles, joint_names, step_label):
     """Draw HUD: frame counter, velocities, and joint angle bars."""
     h, w = frame_bgr.shape[:2]
 
     # Top bar
     cv2.rectangle(frame_bgr, (0, 0), (w, 40), (0, 0, 0), -1)
     cv2.putText(frame_bgr,
-        f"Step 500k  |  ep {ep}  |  move {move} ({move*POLICY_MS}ms)"
+        f"Step {step_label}  |  ep {ep}  |  move {move} ({move*POLICY_MS}ms)"
         f"  |  x_vel {x_vel:+.2f} m/s  |  up {up_z:.2f}",
         (10, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 1, cv2.LINE_AA)
 
@@ -119,7 +120,7 @@ def main():
     cam.elevation = -18
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(out_mp4, fourcc, FPS, (WIDTH, HEIGHT))
+    writer = cv2.VideoWriter(out_mp4, fourcc, FPS_PLAYBACK, (WIDTH, HEIGHT))
 
     n_policy_steps = SECONDS * round(1000 / POLICY_MS)   # policy decisions in SECONDS
     obs, _ = env.reset(seed=0)
@@ -128,15 +129,12 @@ def main():
     move = 0
     total_frames = 0
 
-    print(f"Rendering at {FPS}fps ({CTRL_MS}ms/frame, {POLICY_MS}ms/policy step)...")
+    print(f"Rendering at {FPS_RENDER}fps physics, {FPS_PLAYBACK}fps playback ({CTRL_MS}ms/frame, {POLICY_MS}ms/policy step)...")
 
     for _ in range(n_policy_steps):
         # Ask policy for action once
         st = torch.FloatTensor(obs).unsqueeze(0).to(DEVICE)
         action = actor.act(st).cpu().numpy()[0]
-        ctrl = raw_env.unwrapped._denorm_action(action) if hasattr(raw_env, 'unwrapped') \
-               else raw_env._denorm_action(action)
-
         term = trunc = False
         info = {}
 
@@ -146,6 +144,8 @@ def main():
             for _ in range(_FRAME_SKIP):
                 mujoco.mj_step(raw_env.model, raw_env_data)
 
+            cam.lookat[0] = float(raw_env_data.qpos[0])  # follow robot in X
+            cam.lookat[1] = float(raw_env_data.qpos[1])  # follow robot in Y
             renderer.update_scene(raw_env_data, camera=cam)
             frame_rgb = renderer.render().copy()
             frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
@@ -154,7 +154,7 @@ def main():
             up_z   = raw_env._torso_up_z()
             joint_angles = raw_env_data.qpos[7:].copy()
 
-            draw_overlay(frame_bgr, move, ep, x_vel, up_z, joint_angles, joint_names)
+            draw_overlay(frame_bgr, move, ep, x_vel, up_z, joint_angles, joint_names, f"{args.step:,}")
             writer.write(frame_bgr)
             total_frames += 1
 

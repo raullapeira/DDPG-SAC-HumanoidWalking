@@ -145,7 +145,9 @@ class AlphaEnv(gym.Env):
         lateral_cost   = _LATERAL_COST_WEIGHT * y_velocity ** 2
         fall_penalty   = _FALL_PENALTY if terminated else 0.0
         slow_penalty   = -2.0 if x_velocity < 0.02 else 0.0
-        foot_height_reward = _FOOT_HEIGHT * max(left_leg_z, right_leg_z)
+        foot_height_reward = 0
+        #foot_height_reward = _FOOT_HEIGHT * max(left_leg_z, right_leg_z)
+        
 
         reward = (forward_reward + alive_bonus + upright_reward
                   - ctrl_cost - smooth_cost - lateral_cost + fall_penalty 

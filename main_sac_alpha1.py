@@ -32,7 +32,7 @@ TAU = 0.005  # Soft update rate for target critic
 BUFFER_SIZE = int(1e6)  # Max size of replay buffer
 BATCH_SIZE = 256  # Batch size used during training
 LEARNING_STARTS = 1000  # Wait until this many steps before starting updates
-TOTAL_TIMESTEPS = 1_000_000  # Total steps to train for
+TOTAL_TIMESTEPS = 9_000_000  # Total steps to train for
 SAVE_INTERVAL = 50000  # How often to save checkpoints
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # Use GPU if available
