@@ -1,0 +1,17 @@
+1. rotacional hombro derecho
+2. extension hombro derecho
+3. rotacion codo derecho
+4. rotacional hombro izquierdo
+5. extension hombro izquierdo
+6. rotacion codo izquierdo
+7. cadera lateral derecho
+8. cadera frontal derecho
+9. rodilla derecha
+10. tobillo derecho frontal
+11. tobillo derecho lateral
+12. cadera lateral izquierdo
+13. cadera lateral derecho
+14. rodilla izquierda
+15. tobillo izquierdo frontal
+16. tobillo izquierdo lateral
+

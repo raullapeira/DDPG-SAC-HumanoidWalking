@@ -34,15 +34,45 @@ python tools/export_mp4.py --ckpt checkpoints/sac_alpha/sac2_checkpoint_1000000.
 python tools/make_checkpoint_gif.py --ckpt checkpoints/sac_alpha/sac2_checkpoint_1000000.pt --step 1000000
 ```
 
+## Export to real robot (UBTech Alpha)
+
+Generates a `.aesx` action file (importable in UBTech software) and a slow MP4 for comparison, both with the same base name:
+
+```
+python tools/export_aesx_mp4.py \
+    --ckpt checkpoints/sac_alpha/sac2_checkpoint_950000.pt \
+    --n_steps 10 \
+    --out robot/simu_a_real/10_movs_25_03_26
+```
+
+- `--n_steps`: number of policy steps to export (template supports up to 19)
+- `--out`: base output path (no extension) — produces `<out>.aesx` and `<out>.mp4`
+- MP4 plays at 5 fps (8x slower than real-time) for easy comparison with the physical robot
+- Servo values are inverted from simulation angles to match real robot direction
+- Template: `robot/simu_a_real/exportado_por_sw_ubtech.aesx`
+
+### Known issues (as of 25/03/2026)
+
+- Robot moves but gait is not yet reliable: rear foot doesn't push off properly
+- Servo direction mapping needs further validation against physical robot
+
 ## Structure
 
 ```
 DDPG-SAC-HumanoidWalking/
-├── main_sac_alpha1.py       # Training loop
-├── envs/alpha_env.py        # MuJoCo environment + reward shaping
-├── robot/alpha_single.xml   # Robot model (16 actuators, kp=20)
+├── main_sac_alpha1.py          # Training loop
+├── envs/alpha_env.py           # MuJoCo environment + reward shaping
+├── robot/
+│   ├── alpha_single.xml        # Robot model (16 actuators, kp=20)
+│   └── simu_a_real/            # Simulation → real robot export files
+│       ├── exportado_por_sw_ubtech.aesx  # Template (19 frames)
+│       ├── extrae.py           # Parse/inspect .aesx files
+│       ├── genera.py           # Inject CSV servo values into .aesx template
+│       └── *.aesx / *.mp4      # Generated exports
 ├── tools/
-│   ├── export_mp4.py        # Smooth MP4 with joint angle bars
+│   ├── export_aesx_mp4.py      # Export .aesx + slow MP4 from checkpoint
+│   ├── export_mp4.py           # Smooth MP4 with joint angle bars
+│   ├── export_servo_csv.py     # Export servo values to CSV
 │   └── make_checkpoint_gif.py
-└── media/                   # GIFs and videos per training run
+└── media/                      # GIFs and videos per training run
 ```
