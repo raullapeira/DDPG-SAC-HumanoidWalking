@@ -32,10 +32,10 @@ class AlphaEnv(gym.Env):
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 50}
 
-    def __init__(self, render_mode=None):
+    def __init__(self, render_mode=None, xml_path=None):
         self.render_mode = render_mode
 
-        xml_path = os.path.abspath(_XML_PATH)
+        xml_path = os.path.abspath(xml_path if xml_path is not None else _XML_PATH)
         self.model = mujoco.MjModel.from_xml_path(xml_path)
         self.data  = mujoco.MjData(self.model)
 

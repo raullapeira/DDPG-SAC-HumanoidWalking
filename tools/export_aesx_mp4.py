@@ -40,9 +40,14 @@ SERVO_NAMES = [
     "cadera_lat_izq",    "cadera_front_izq",  "rodilla_izq",
     "tobillo_front_izq", "tobillo_lat_izq",
 ]
-NEUTRAL_REAL = [90, 90, 90, 90, 90, 90, 90, 60,
-                76, 110, 90, 90, 120, 104, 70, 90]
-REAL_TO_MUJOCO = [15, 13, 14, 7, 5, 6, 8, 9, 10, 11, 12, 0, 1, 2, 3, 4]
+NEUTRAL_REAL = [90, 90, 90, 90, 90, 90, 90, 120,
+                145, 95, 90, 90, 60, 30, 95, 90]
+# Los neutrales v2 están intercambiados entre piernas (der 120, izq 60) respecto a v1
+# (der 60, izq 120). Para que la formula neutral-degrees funcione igual que en v1,
+# se intercambia qué pierna física recibe los valores de qué pierna MuJoCo:
+#   pierna física DER (pos 7-11, índices 6-10) → joints MuJoCo LEFT (0-4)
+#   pierna física IZQ (pos 12-16, índices 11-15) → joints MuJoCo RIGHT (8-12)
+REAL_TO_MUJOCO = [15, 13, 14, 7, 5, 6, 0, 1, 2, 3, 4, 8, 9, 10, 11, 12]
 NEUTRAL_MUJOCO = [NEUTRAL_REAL[REAL_TO_MUJOCO.index(i)] for i in range(16)]
 
 
@@ -87,7 +92,7 @@ def inject_aesx(template_path, frames, out_path, duration_ms=None):
     if not offsets:
         print("❌ No se encontraron bloques de servos en la plantilla")
         return False
-    for idx, (frame_dur, servos) in enumerate(frames):
+    for idx, (frame_dur, servos, *_) in enumerate(frames):
         if idx >= len(offsets):
             break
         base = offsets[idx]
@@ -152,13 +157,18 @@ def main():
         _HERE, "..", "robot", "simu_a_real", "exportado_por_sw_ubtech.aesx"))
     parser.add_argument("--out",      required=True,
                         help="Base path sin extensión, p.ej. robot/simu_a_real/5_movs_25_03_26")
+    parser.add_argument("--xml",      default=None,
+                        help="Ruta al XML del modelo (por defecto usa el v1)")
+    parser.add_argument("--gif",      action="store_true",
+                        help="Genera también un .gif además del .mp4")
     args = parser.parse_args()
 
     out_aesx = args.out + ".aesx"
     out_mp4  = args.out + ".mp4"
+    out_gif  = args.out + ".gif"
     os.makedirs(os.path.dirname(os.path.abspath(out_aesx)), exist_ok=True)
 
-    env = gym.wrappers.TimeLimit(AlphaEnv(), max_episode_steps=10_000)
+    env = gym.wrappers.TimeLimit(AlphaEnv(xml_path=args.xml), max_episode_steps=10_000)
     s = env.observation_space.shape[0]
     a = env.action_space.shape[0]
     m = float(env.action_space.high[0])
@@ -182,7 +192,7 @@ def main():
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(out_mp4, fourcc, FPS_PLAYBACK, (WIDTH, OUT_H))
 
-    servo_frames = [(POLICY_MS, list(NEUTRAL_REAL))]  # frame 0: posición de reposo
+    servo_frames = [(POLICY_MS, list(NEUTRAL_REAL), [0.0]*16)]  # frame 0: posición de reposo
 
     # Renderizar frame de reposo (posición inicial)
     renderer.update_scene(raw_env.data, camera=cam)
@@ -203,7 +213,10 @@ def main():
         joint_angles = raw_env.data.qpos[7:].copy()
         servo_mujoco = [angle_to_servo(joint_angles[i], NEUTRAL_MUJOCO[i]) for i in range(16)]
         servo_real   = [servo_mujoco[REAL_TO_MUJOCO[i]] for i in range(16)]
-        servo_frames.append((POLICY_MS, servo_real))
+        # ángulos en grados reordenados al orden real (mismo reordenamiento que servos)
+        angles_mujoco_deg = [np.degrees(joint_angles[i]) for i in range(16)]
+        angles_real_deg   = [angles_mujoco_deg[REAL_TO_MUJOCO[i]] for i in range(16)]
+        servo_frames.append((POLICY_MS, servo_real, angles_real_deg))
 
         # Step through each control sub-step, rendering with the sent servo values
         for ctrl_i in range(_ACTION_REPEAT):
@@ -229,11 +242,53 @@ def main():
     env.close()
     renderer.close()
 
+    # --- export readable table ---
+    out_txt = args.out + "_servos.txt"
+    col_w = 6
+    header = f"{'Paso':<8}" + "".join(f"S{i+1:02d}".rjust(col_w) for i in range(16))
+    sep = "-" * len(header)
+
+    lines = ["=== ANGULOS MUJOCO (grados) — inclinacion real de cada joint ===",
+             header, sep]
+    for idx, (dur, servos, angles_deg) in enumerate(servo_frames):
+        label = f"paso {idx+1:2d}"
+        row = f"{label:<8}" + "".join(f"{v:+.1f}".rjust(col_w) for v in angles_deg)
+        lines.append(row)
+    lines += [sep, ""]
+
+    lines += ["=== VALORES SERVO exportados al robot ===",
+              header, sep]
+    for idx, (dur, servos, angles_deg) in enumerate(servo_frames):
+        label = f"paso {idx+1:2d}"
+        row = f"{label:<8}" + "".join(str(v).rjust(col_w) for v in servos)
+        lines.append(row)
+    lines.append(sep)
+    neutro_row = f"{'neutro':<8}" + "".join(str(n).rjust(col_w) for n in NEUTRAL_REAL)
+    lines.append(neutro_row)
+
+    with open(out_txt, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    print(f"✅ TXT   -> {out_txt}")
+
     # --- generate .aesx ---
     template = os.path.abspath(args.template)
     if inject_aesx(template, servo_frames, out_aesx, duration_ms=800):
-        print(f"\n✅ AESX  -> {out_aesx}")
+        print(f"✅ AESX  -> {out_aesx}")
     print(f"✅ MP4   -> {out_mp4}")
+
+    # --- generate .gif (optional) ---
+    if args.gif:
+        import imageio
+        cap = cv2.VideoCapture(out_mp4)
+        gif_frames = []
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            gif_frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        cap.release()
+        imageio.mimsave(out_gif, gif_frames, fps=FPS_PLAYBACK, loop=0)
+        print(f"✅ GIF   -> {out_gif}")
 
 
 if __name__ == "__main__":
