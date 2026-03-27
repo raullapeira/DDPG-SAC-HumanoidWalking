@@ -40,21 +40,21 @@
             quat="0.707105 0 0.707108 0">
         <joint name="Left_Lateral_Thigh_link_joint" type="hinge" axis="0 0 1"
                range="-1.0 1.93" frictionloss="0.15"/>
-        <geom name="Left_Lateral_Thigh_link_col0" type="box" size="0.02 0.02 0.02"
-              pos="0.02 0 0" quat="0.707105 0 -0.707108 0" condim="3"/>
+        <geom name="Left_Lateral_Thigh_link_col0" type="box" size="0.02 0.02 0.0225"
+              pos="0.0225 0 0" quat="0.707105 0 -0.707108 0" condim="3"/>
         <inertial pos="0 0 0" mass="0.07"
-                  diaginertia="1.8667e-05 1.8667e-05 1.8667e-05"/>
-        <body name="Left_Thigt_link" pos="0.0395 0 0"
+                  diaginertia="2.114583e-05 2.114583e-05 1.8667e-05"/>
+        <body name="Left_Thigt_link" pos="0.0445 0 0"
               quat="0.499998 0.500000 -0.500000 0.500002">
           <joint name="Left_Thigt_link_joint" type="hinge" axis="0 0 1"
                  range="-1.57 1.57" frictionloss="0.15"/>
-          <geom name="Left_Thigt_link_col0" type="box" size="0.0175 0.02 0.0375"
-                pos="0 -0.0375 0" quat="0.707105 -0.707108 0 0" condim="3"/>
+          <geom name="Left_Thigt_link_col0" type="box" size="0.0175 0.02 0.025"
+                pos="0 -0.025 0" quat="0.707105 -0.707108 0 0" condim="3"/>
           <inertial pos="0 0 0" mass="0.115"
-                    diaginertia="6.924e-05 6.5646e-05 2.7073e-05"/>
-          <body name="Left_Leg_Link" pos="0 -0.075 0" quat="1 0 0 0">
+                    diaginertia="3.929166e-05 3.569791e-05 2.7073e-05"/>
+          <body name="Left_Leg_Link" pos="-0.025 -0.050 0" quat="1 0 0 0">
             <joint name="Left_Leg_Link_joint" type="hinge" axis="0 0 1"
-                   range="-2.3 0.7" frictionloss="0.15"/>
+                   range="-2.7 0.3" frictionloss="0.15"/>
             <geom name="Left_Leg_Link_col0" type="box" size="0.0175 0.025 0.03"
                   pos="0 -0.03 0" quat="0.707105 -0.707108 0 0" condim="3"/>
             <inertial pos="0 0 0" mass="0.11"
@@ -113,21 +113,21 @@
             quat="0.707105 0 0.707108 0">
         <joint name="Right_Lateral_Thigh_link_joint" type="hinge" axis="0 0 1"
                range="-1.93 1.0" frictionloss="0.15"/>
-        <geom name="Right_Lateral_Thigh_link_col0" type="box" size="0.02 0.02 0.02"
-              pos="0.02 0 0" quat="0.707105 0 -0.707108 0" condim="3"/>
+        <geom name="Right_Lateral_Thigh_link_col0" type="box" size="0.02 0.02 0.0225"
+              pos="0.0225 0 0" quat="0.707105 0 -0.707108 0" condim="3"/>
         <inertial pos="0 0 0" mass="0.07"
-                  diaginertia="1.8667e-05 1.8667e-05 1.8667e-05"/>
-        <body name="Right_Thigh_link" pos="0.0395 0 0"
+                  diaginertia="2.114583e-05 2.114583e-05 1.8667e-05"/>
+        <body name="Right_Thigh_link" pos="0.0445 0 0"
               quat="0.499998 0.500000 -0.500000 0.500002">
           <joint name="Right_Thigh_link_joint" type="hinge" axis="0 0 1"
                  range="-1.57 1.57" frictionloss="0.15"/>
-          <geom name="Right_Thigh_link_col0" type="box" size="0.0175 0.02 0.0375"
-                pos="0 -0.0375 0" quat="0.707105 -0.707108 0 0" condim="3"/>
+          <geom name="Right_Thigh_link_col0" type="box" size="0.0175 0.02 0.025"
+                pos="0 -0.025 0" quat="0.707105 -0.707108 0 0" condim="3"/>
           <inertial pos="0 0 0" mass="0.115"
-                    diaginertia="6.924e-05 6.5646e-05 2.7073e-05"/>
-          <body name="Right_Leg_link" pos="0 -0.075 0" quat="1 0 0 0">
+                    diaginertia="3.929166e-05 3.569791e-05 2.7073e-05"/>
+          <body name="Right_Leg_link" pos="-0.025 -0.050 0" quat="1 0 0 0">
             <joint name="Right_Leg_link_joint" type="hinge" axis="0 0 1"
-                   range="-2.3 0.7" frictionloss="0.15"/>
+                   range="-2.7 0.3" frictionloss="0.15"/>
             <geom name="Right_Leg_link_col0" type="box" size="0.0175 0.025 0.03"
                   pos="0 -0.03 0" quat="0.707105 -0.707108 0 0" condim="3"/>
             <inertial pos="0 0 0" mass="0.11"
@@ -191,7 +191,7 @@
     <position name="act_Left_Thigt"         joint="Left_Thigt_link_joint"
               kp="20" kv="10" ctrlrange="-1.57 1.57"  forcerange="-1.5 1.5"/>
     <position name="act_Left_Leg"           joint="Left_Leg_Link_joint"
-              kp="20" kv="10" ctrlrange="-2.3 0.7"    forcerange="-1.5 1.5"/>
+              kp="20" kv="10" ctrlrange="-2.7 0.3"    forcerange="-1.5 1.5"/>
     <position name="act_Left_Ankle"         joint="Left_Ankle_link_joint"
               kp="20" kv="10" ctrlrange="-1.57 1.57"  forcerange="-1.5 1.5"/>
     <position name="act_Left_Feet"          joint="Left_Feet_link_joint"
@@ -209,7 +209,7 @@
     <position name="act_Right_Thigh"         joint="Right_Thigh_link_joint"
               kp="20" kv="10" ctrlrange="-1.57 1.57"  forcerange="-1.5 1.5"/>
     <position name="act_Right_Leg"           joint="Right_Leg_link_joint"
-              kp="20" kv="10" ctrlrange="-2.3 0.7"    forcerange="-1.5 1.5"/>
+              kp="20" kv="10" ctrlrange="-2.7 0.3"    forcerange="-1.5 1.5"/>
     <position name="act_Right_Ankle"         joint="Right_Ankle_link_joint"
               kp="20" kv="10" ctrlrange="-1.57 1.57"  forcerange="-1.5 1.5"/>
     <position name="act_Right_Feet"          joint="Right_Feet_link_joint"

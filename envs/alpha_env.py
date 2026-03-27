@@ -22,7 +22,7 @@ _ALIVE_BONUS        = 0.8
 _UPRIGHT_WEIGHT     = 0.3
 _LATERAL_COST_WEIGHT = 0.8  # allows hip swing, discourages crab-walk
 _FALL_PENALTY       = -10.0
-_FOOT_HEIGHT        = 2.0
+_SWING_PENALTY        = 1.0
 
 class AlphaEnv(gym.Env):
     """
@@ -113,6 +113,12 @@ class AlphaEnv(gym.Env):
 
         mujoco.mj_forward(self.model, self.data)
         return self._get_obs(), {}
+    
+    def _torso_roll(self):
+        qw, qx, qy, qz = self.data.qpos[3:7]
+        sinr_cosp = 2 * (qw * qx + qy * qz)
+        cosr_cosp = 1 - 2 * (qx * qx + qy * qy)
+        return np.arctan2(sinr_cosp, cosr_cosp)
 
     def step(self, action):
         action = np.clip(action, -1.0, 1.0)
@@ -134,6 +140,8 @@ class AlphaEnv(gym.Env):
 
         terminated = bool(root_z < _FALL_Z or up_z < _TILT_Z)
 
+        roll = self._torso_roll()
+
         x_velocity     = self.data.qvel[0]
         y_velocity     = self.data.qvel[1]
         v_clipped      = np.clip(x_velocity, 0.0, 1.0)
@@ -145,13 +153,11 @@ class AlphaEnv(gym.Env):
         lateral_cost   = _LATERAL_COST_WEIGHT * y_velocity ** 2
         fall_penalty   = _FALL_PENALTY if terminated else 0.0
         slow_penalty   = -2.0 if x_velocity < 0.02 else 0.0
-        foot_height_reward = 0
-        #foot_height_reward = _FOOT_HEIGHT * max(left_leg_z, right_leg_z)
-        
+        lateral_tilt_penalty = 0.0
 
         reward = (forward_reward + alive_bonus + upright_reward
                   - ctrl_cost - smooth_cost - lateral_cost + fall_penalty 
-                  + slow_penalty + foot_height_reward)
+                  + slow_penalty - lateral_tilt_penalty)
 
         self._prev_action = action.copy()
 
