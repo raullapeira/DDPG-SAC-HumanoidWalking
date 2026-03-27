@@ -42,6 +42,11 @@ SERVO_NAMES = [
 ]
 NEUTRAL_REAL = [90, 90, 90, 90, 90, 90, 90, 120,
                 145, 95, 90, 90, 60, 30, 95, 90]
+# Signo por servo: -1 → neutral - degrees  |  +1 → neutral + degrees
+# Los joints con neutro < 90 (espejo físico) necesitan signo opuesto
+SERVO_SIGN = [-1, -1, -1, -1, -1, -1,   # S1-S6  brazos
+              -1, -1, -1, +1, +1,         # S7-S11 pierna der  (S10 tob_frt, S11 tob_lat invertidos)
+              +1, +1, +1, -1, -1]         # S12-S16 pierna izq  (S12 cad_lat, S13 cad_frt, S14 rod invertidos)
 # Los neutrales v2 están intercambiados entre piernas (der 120, izq 60) respecto a v1
 # (der 60, izq 120). Para que la formula neutral-degrees funcione igual que en v1,
 # se intercambia qué pierna física recibe los valores de qué pierna MuJoCo:
@@ -63,8 +68,8 @@ class Actor(nn.Module):
             return torch.tanh(self.mu(self.net(state))) * self.max_action
 
 
-def angle_to_servo(angle_rad, neutral):
-    return int(np.clip(round(neutral - np.degrees(angle_rad)), 0, 255))
+def angle_to_servo(angle_rad, neutral, sign=-1):
+    return int(np.clip(round(neutral + sign * np.degrees(angle_rad)), 0, 255))
 
 
 # --- aesx injection (from genera.py) ---
@@ -189,8 +194,17 @@ def main():
     cam.azimuth   = 150
     cam.elevation = -18
 
+    renderer_lat = mujoco.Renderer(raw_env.model, height=HEIGHT, width=WIDTH)
+    cam_lat = mujoco.MjvCamera()
+    cam_lat.type      = mujoco.mjtCamera.mjCAMERA_FREE
+    cam_lat.lookat[:] = [0.0, 0.0, 0.20]
+    cam_lat.distance  = 1.1
+    cam_lat.azimuth   = 90
+    cam_lat.elevation = -10
+
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(out_mp4, fourcc, FPS_PLAYBACK, (WIDTH, OUT_H))
+    writer     = cv2.VideoWriter(out_mp4,                    fourcc, FPS_PLAYBACK, (WIDTH, OUT_H))
+    writer_lat = cv2.VideoWriter(out_mp4.replace(".mp4", "_lateral.mp4"), fourcc, FPS_PLAYBACK, (WIDTH, HEIGHT))
 
     servo_frames = [(POLICY_MS, list(NEUTRAL_REAL), [0.0]*16)]  # frame 0: posición de reposo
 
@@ -200,8 +214,11 @@ def main():
     frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
     total_steps = args.n_steps + 1
     rest_frame = draw_overlay(frame_bgr, 1, total_steps, 0.0, raw_env._torso_up_z(), list(NEUTRAL_REAL))
+    renderer_lat.update_scene(raw_env.data, camera=cam_lat)
+    rest_frame_lat = cv2.cvtColor(renderer_lat.render().copy(), cv2.COLOR_RGB2BGR)
     for _ in range(FPS_RENDER // _ACTION_REPEAT):  # misma duración que un policy step
         writer.write(rest_frame)
+        writer_lat.write(rest_frame_lat)
 
     print(f"Simulando {total_steps} pasos  |  playback {FPS_PLAYBACK}fps ({FPS_RENDER//FPS_PLAYBACK}x lento)...")
 
@@ -212,7 +229,9 @@ def main():
         # Capture servo values for this step (what gets sent to the robot)
         joint_angles = raw_env.data.qpos[7:].copy()
         servo_mujoco = [angle_to_servo(joint_angles[i], NEUTRAL_MUJOCO[i]) for i in range(16)]
-        servo_real   = [servo_mujoco[REAL_TO_MUJOCO[i]] for i in range(16)]
+        servo_real   = [angle_to_servo(joint_angles[REAL_TO_MUJOCO[i]],
+                                       NEUTRAL_REAL[i],
+                                       SERVO_SIGN[i]) for i in range(16)]
         # ángulos en grados reordenados al orden real (mismo reordenamiento que servos)
         angles_mujoco_deg = [np.degrees(joint_angles[i]) for i in range(16)]
         angles_real_deg   = [angles_mujoco_deg[REAL_TO_MUJOCO[i]] for i in range(16)]
@@ -226,6 +245,8 @@ def main():
 
             cam.lookat[0] = float(raw_env.data.qpos[0])
             cam.lookat[1] = float(raw_env.data.qpos[1])
+            cam_lat.lookat[0] = float(raw_env.data.qpos[0])
+            cam_lat.lookat[1] = float(raw_env.data.qpos[1])
             renderer.update_scene(raw_env.data, camera=cam)
             frame_rgb = renderer.render().copy()
             frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
@@ -235,12 +256,18 @@ def main():
             out_frame = draw_overlay(frame_bgr, step + 2, total_steps, x_vel, up_z, servo_real)
             writer.write(out_frame)
 
+            renderer_lat.update_scene(raw_env.data, camera=cam_lat)
+            frame_lat = cv2.cvtColor(renderer_lat.render().copy(), cv2.COLOR_RGB2BGR)
+            writer_lat.write(frame_lat)
+
         obs = raw_env._get_obs()
         print(f"  Step {step+1:2d}: {servo_real}")
 
     writer.release()
+    writer_lat.release()
     env.close()
     renderer.close()
+    renderer_lat.close()
 
     # --- export readable table ---
     out_txt = args.out + "_servos.txt"
@@ -275,6 +302,7 @@ def main():
     if inject_aesx(template, servo_frames, out_aesx, duration_ms=800):
         print(f"✅ AESX  -> {out_aesx}")
     print(f"✅ MP4   -> {out_mp4}")
+    print(f"✅ MP4   -> {out_mp4.replace('.mp4', '_lateral.mp4')}")
 
     # --- generate .gif (optional) ---
     if args.gif:
