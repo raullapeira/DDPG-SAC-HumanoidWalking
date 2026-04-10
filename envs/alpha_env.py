@@ -43,7 +43,15 @@ class AlphaEnv(gym.Env):
         self._ctrl_high = self.model.actuator_ctrlrange[:, 1].copy()
         self._ctrl_half = (self._ctrl_high - self._ctrl_low) / 2.0
 
-        n_act = self.model.nu
+        # Índices de actuadores: piernas (10) y brazos (6)
+        self._leg_ctrl_idx = np.array([0, 1, 2, 3, 4, 8, 9, 10, 11, 12], dtype=int)
+        self._arm_ctrl_idx = np.array([5, 6, 7, 13, 14, 15], dtype=int)
+        self._leg_obs_idx  = np.array([0, 1, 2, 3, 4, 8, 9, 10, 11, 12], dtype=int)
+        # Índices en qpos/qvel para fijar brazos (offset 7 en qpos, 6 en qvel)
+        self._arm_qpos_idx = np.array([7+5, 7+6, 7+7, 7+13, 7+14, 7+15], dtype=int)
+        self._arm_qvel_idx = np.array([6+5, 6+6, 6+7, 6+13, 6+14, 6+15], dtype=int)
+
+        n_act = len(self._leg_ctrl_idx)   # 10 (solo piernas)
         n_obs = self._get_obs().shape[0]
 
         self.action_space = spaces.Box(
@@ -54,8 +62,9 @@ class AlphaEnv(gym.Env):
             low=-obs_limit, high=obs_limit, dtype=np.float32
         )
 
-        self._prev_action = np.zeros(n_act, dtype=np.float32)
         self._renderer = None
+
+        self._prev_action = np.zeros(len(self._leg_ctrl_idx), dtype=np.float32)
 
         self._left_leg_id  = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "Left_Leg_Link")
         self._right_leg_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "Right_Leg_link")
@@ -63,10 +72,16 @@ class AlphaEnv(gym.Env):
     def _get_obs(self):
         qpos = self.data.qpos.flat.copy()
         qvel = self.data.qvel.flat.copy()
-        return np.concatenate([qpos[2:], qvel]).astype(np.float32)
+        leg_qpos = qpos[7:][self._leg_obs_idx]   # 10 joints de piernas
+        leg_qvel = qvel[6:][self._leg_obs_idx]   # 10 velocidades de piernas
+        # 5 (pose torso) + 6 (vel torso) + 10 + 10 = 31D
+        return np.concatenate([qpos[2:7], qvel[0:6], leg_qpos, leg_qvel]).astype(np.float32)
 
     def _denorm_action(self, action):
-        return np.clip(action * self._ctrl_half, self._ctrl_low, self._ctrl_high)
+        low  = self._ctrl_low[self._leg_ctrl_idx]
+        high = self._ctrl_high[self._leg_ctrl_idx]
+        half = (high - low) / 2.0
+        return np.clip(action * half, low, high)
 
     def _torso_up_z(self):
         qw, qx, qy, qz = self.data.qpos[3:7]
@@ -80,7 +95,7 @@ class AlphaEnv(gym.Env):
         n_joints = self.model.nq - 7
         self.data.qpos[7:] += rng.uniform(-0.05, 0.05, n_joints)
 
-        self._prev_action = np.zeros(self.model.nu, dtype=np.float32)
+        self._prev_action = np.zeros(len(self._leg_ctrl_idx), dtype=np.float32)
 
         mujoco.mj_forward(self.model, self.data)
         return self._get_obs(), {}
@@ -89,9 +104,16 @@ class AlphaEnv(gym.Env):
         action = np.clip(action, -1.0, 1.0)
 
         for _ in range(_ACTION_REPEAT):
-            self.data.ctrl[:] = self._denorm_action(action)
+            full_ctrl = np.zeros(self.model.nu, dtype=np.float64)
+            full_ctrl[self._leg_ctrl_idx] = self._denorm_action(action)
+            self.data.ctrl[:] = full_ctrl
             for _ in range(_FRAME_SKIP):
                 mujoco.mj_step(self.model, self.data)
+            # Fijar brazos pegados al cuerpo (los actuadores de brazos son motor,
+            # torque=0 no los sujeta; hay que fijar qpos y qvel directamente)
+            self.data.qpos[self._arm_qpos_idx] = 0.0
+            self.data.qvel[self._arm_qvel_idx] = 0.0
+            mujoco.mj_forward(self.model, self.data)
 
         obs = self._get_obs()
 

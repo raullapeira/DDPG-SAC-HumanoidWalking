@@ -58,13 +58,27 @@ def main():
 
     ctrl_low  = model.actuator_ctrlrange[:, 0].copy()
     ctrl_high = model.actuator_ctrlrange[:, 1].copy()
-    ctrl_half = (ctrl_high - ctrl_low) / 2.0
+
+    # Mismos índices que AlphaEnv
+    leg_ctrl_idx = np.array([0, 1, 2, 3, 4, 8, 9, 10, 11, 12], dtype=int)
+    leg_obs_idx  = np.array([0, 1, 2, 3, 4, 8, 9, 10, 11, 12], dtype=int)
+    arm_qpos_idx = np.array([7+5, 7+6, 7+7, 7+13, 7+14, 7+15], dtype=int)
+    arm_qvel_idx = np.array([6+5, 6+6, 6+7, 6+13, 6+14, 6+15], dtype=int)
 
     def get_obs():
-        return np.concatenate([data.qpos.flat[2:], data.qvel.flat]).astype(np.float32)
+        qpos = data.qpos.flat.copy()
+        qvel = data.qvel.flat.copy()
+        leg_qpos = qpos[7:][leg_obs_idx]
+        leg_qvel = qvel[6:][leg_obs_idx]
+        return np.concatenate([qpos[2:7], qvel[0:6], leg_qpos, leg_qvel]).astype(np.float32)
 
     def denorm(action):
-        return np.clip(action * ctrl_half, ctrl_low, ctrl_high)
+        low  = ctrl_low[leg_ctrl_idx]
+        high = ctrl_high[leg_ctrl_idx]
+        half = (high - low) / 2.0
+        full = np.zeros(model.nu, dtype=np.float64)
+        full[leg_ctrl_idx] = np.clip(action * half, low, high)
+        return full
 
     # Reset
     mujoco.mj_resetData(model, data)
@@ -75,7 +89,7 @@ def main():
 
     # Cargar actor
     n_obs = obs.shape[0]
-    n_act = model.nu
+    n_act = len(leg_ctrl_idx)   # 10
     actor = Actor(n_obs, n_act, 1.0).to(device)
     ckpt  = torch.load(args.ckpt, map_location=device, weights_only=False)
     actor.load_state_dict(ckpt["actor"])
@@ -100,6 +114,9 @@ def main():
             data.ctrl[:] = denorm(action)
             for _ in range(FRAME_SKIP):
                 mujoco.mj_step(model, data)
+            data.qpos[arm_qpos_idx] = 0.0
+            data.qvel[arm_qvel_idx] = 0.0
+            mujoco.mj_forward(model, data)
 
             cam.lookat[0] = float(data.qpos[0])
             cam.lookat[1] = float(data.qpos[1])
