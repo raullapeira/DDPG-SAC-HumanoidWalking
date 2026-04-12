@@ -37,8 +37,8 @@ PAUSE_SEGUNDOS = 3
 PAUSE_FRAMES   = FPS_PLAYBACK * PAUSE_SEGUNDOS  # frames de pausa tras cada step
 
 # Joints MuJoCo de cada pierna para overlay de grados
-JOINTS_DER = [0, 1, 2, 3, 4]    # pierna derecha fisica → MuJoCo LEFT
-JOINTS_IZQ = [8, 9, 10, 11, 12] # pierna izquierda fisica → MuJoCo RIGHT
+JOINTS_DER = [8, 9, 10, 11, 12]  # pierna derecha fisica → MuJoCo RIGHT
+JOINTS_IZQ = [0, 1, 2,  3,  4]   # pierna izquierda fisica → MuJoCo LEFT
 LEG_LABELS = ["Cad Lat", "Cad Frt", "Rodilla", "Tob Frt", "Tob Lat"]
 
 # --- servo conversion constants (from export_servo_csv.py) ---
@@ -55,8 +55,8 @@ NEUTRAL_REAL = [90, 90, 90, 90, 90, 90, 90, 120,
 # Signo por servo: -1 → neutral - degrees  |  +1 → neutral + degrees
 # Los joints con neutro < 90 (espejo físico) necesitan signo opuesto
 SERVO_SIGN = [-1, -1, -1, -1, -1, -1,   # S1-S6  brazos
-              +1, +1, +1, +1, +1,         # S7-S11 pierna der  (S08 cad_frt_D: -1→+1 fix v2)
-              -1, -1, -1, -1, -1]         # S12-S16 pierna izq (S13 cad_frt_I: +1→-1 fix v2)
+              +1, +1, +1, -1, +1,         # S7-S11 pierna der  (S08 cad_frt_D: -1→+1 fix v2)
+              -1, -1, -1, +1, -1]         # S12-S16 pierna izq (S13 cad_frt_I: +1→-1 fix v2)
 # Los neutrales v2 están intercambiados entre piernas (der 120, izq 60) respecto a v1
 # (der 60, izq 120). Para que la formula neutral-degrees funcione igual que en v1,
 # se intercambia qué pierna física recibe los valores de qué pierna MuJoCo:
