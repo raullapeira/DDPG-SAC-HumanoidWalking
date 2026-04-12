@@ -19,13 +19,14 @@ _CTRL_COST_WEIGHT   = 0.01
 _FORWARD_WEIGHT     = 5.0
 _ALIVE_BONUS        = 0.8
 _UPRIGHT_WEIGHT     = 0.3
-_LATERAL_COST_WEIGHT = 0.8
+_LATERAL_COST_WEIGHT = 0.15
 _YAW_COST_WEIGHT     = 1.0
 
 _FOOT_HEIGHT_WEIGHT  = 3.0
 _PUSH_OFF_WEIGHT     = 2.0   # 🔥 nuevo
 _FRONT_LIFT_PENALTY  = 1.0   # 🔥 nuevo
 _STANCE_PENALTY      = -0.3  # 🔥 suavizado
+_COM_LATERAL_WEIGHT  = 4.0   # desplazamiento COG sobre pie de apoyo (v13)
 
 
 class AlphaEnv(gym.Env):
@@ -168,12 +169,24 @@ class AlphaEnv(gym.Env):
         stance_penalty = _STANCE_PENALTY if double_support else 0.0
         slow_penalty   = -2.0 if x_velocity < 0.02 else 0.0
 
+        # Premio por tener el COM desplazado sobre el pie de apoyo (eje Y)
+        com_y   = float(self.data.subtree_com[1][1])
+        _SWING_Z = 0.06
+        com_lateral_reward = 0.0
+        if left_z > _SWING_Z and right_z <= _SWING_Z:
+            # pie izq levantado → apoyo derecho → COM debe estar cerca de right_pos[1]
+            com_lateral_reward = _COM_LATERAL_WEIGHT * -abs(com_y - float(right_pos[1]))
+        elif right_z > _SWING_Z and left_z <= _SWING_Z:
+            # pie der levantado → apoyo izquierdo → COM debe estar cerca de left_pos[1]
+            com_lateral_reward = _COM_LATERAL_WEIGHT * -abs(com_y - float(left_pos[1]))
+
         reward = (
             forward_reward
             + alive_bonus
             + upright_reward
             + foot_height_reward
             + push_off_reward
+            + com_lateral_reward
             - ctrl_cost
             - lateral_cost
             - yaw_cost

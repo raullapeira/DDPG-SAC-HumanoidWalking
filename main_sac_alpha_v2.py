@@ -2,7 +2,7 @@ import sys
 import os
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
-_CKPT_DIR = os.path.join(_HERE, "checkpoints", "sac_alpha_v11_solo_piernas")
+_CKPT_DIR = os.path.join(_HERE, "checkpoints", "sac_alpha_v12_cog_apoyo")
 os.makedirs(_CKPT_DIR, exist_ok=True)
 
 _XML_V2 = os.path.join(_HERE, "robot", "reverse_eng_v2", "alpha_single.xml")
@@ -25,9 +25,10 @@ _CSV_PATH = os.path.join(_HERE, "training_log_v2.csv")
 
 # Carpeta de media para esta sesion de training
 _TODAY     = datetime.date.today().strftime("%d_%m_%Y")
-_MEDIA_DIR = os.path.join(_HERE, "media", f"{_TODAY}_v11_solo_piernas")
+_MEDIA_DIR = os.path.join(_HERE, "media", f"{_TODAY}_v12_cog_apoyo")
 os.makedirs(_MEDIA_DIR, exist_ok=True)
-_GIF_SCRIPT = os.path.join(_HERE, "tools", "make_checkpoint_gif_v2.py")
+_GIF_SCRIPT     = os.path.join(_HERE, "tools", "make_checkpoint_gif_v2.py")
+_GIF_COM_SCRIPT = os.path.join(_HERE, "tools", "make_com_gif_transparent.py")
 
 if not os.path.exists(_CSV_PATH):
     with open(_CSV_PATH, mode="w", newline="") as f:
@@ -237,6 +238,14 @@ while global_step < TOTAL_TIMESTEPS:
                  "--out_dir", _MEDIA_DIR],
                 stdout=_gif_log,
                 stderr=_gif_log,
+            )
+            _com_log = open(os.path.join(_MEDIA_DIR, f"gif_com_{global_step}.log"), "w")
+            subprocess.Popen(
+                [sys.executable, _GIF_COM_SCRIPT,
+                 "--ckpt", ckpt_path,
+                 "--out", os.path.join(_MEDIA_DIR, f"com_step_{global_step:07d}.gif")],
+                stdout=_com_log,
+                stderr=_com_log,
             )
 
     writer.add_scalar("Reward/episode", episode_reward, global_step)
