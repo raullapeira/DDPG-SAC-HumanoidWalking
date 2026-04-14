@@ -13,20 +13,28 @@ _FALL_Z = 0.12
 _TILT_Z = 0.7
 
 _FRAME_SKIP    = 5
-_ACTION_REPEAT = 4   # 🔥 antes 8 → ahora 100ms
+_ACTION_REPEAT = 4
 
-_CTRL_COST_WEIGHT   = 0.01
-_FORWARD_WEIGHT     = 5.0
-_ALIVE_BONUS        = 0.8
-_UPRIGHT_WEIGHT     = 0.3
+_CTRL_COST_WEIGHT    = 0.01
+_FORWARD_WEIGHT      = 5.0
+_ALIVE_BONUS         = 1.0
+_UPRIGHT_WEIGHT      = 0.3
 _LATERAL_COST_WEIGHT = 0.15
 _YAW_COST_WEIGHT     = 1.0
 
-_FOOT_HEIGHT_WEIGHT  = 3.0
-_PUSH_OFF_WEIGHT     = 2.0   # 🔥 nuevo
-_FRONT_LIFT_PENALTY  = 1.0   # 🔥 nuevo
-_STANCE_PENALTY      = -0.3  # 🔥 suavizado
-_COM_LATERAL_WEIGHT  = 4.0   # desplazamiento COG sobre pie de apoyo (v13)
+_FOOT_HEIGHT_WEIGHT  = 2.0   # pie trasero se levanta durante el swing
+_FRONT_LIFT_PENALTY  = 1.0   # penaliza levantar el pie delantero antes de tiempo
+_STANCE_PENALTY      = -0.5  # penaliza doble apoyo prolongado
+_SLOW_PENALTY        = -2.0  # penaliza velocidad casi nula
+
+# v14: sin push_off (causaba propulsión por inclinación de tobillo)
+# Nuevo: penalizar tobillo en pie de apoyo, COG sobre pie de apoyo en 2D
+_ANKLE_COST_WEIGHT   = 2.0   # penaliza ank_fwd^2 cuando el pie está apoyado
+_COM_SUPPORT_WEIGHT  = 8.0   # distancia 2D del COG al pie de apoyo (era 4.0, solo Y)
+_SINGLE_SUPP_BONUS   = 0.3   # bonus por apoyo simple claro (un pie levantado >_SWING_Z)
+
+# Umbral de altura del pie (Left/Right_Feet_link) para considerar apoyo vs. swing
+_STANCE_Z = 0.04   # pie por debajo → apoyado; por encima → en el aire
 
 
 class AlphaEnv(gym.Env):
@@ -42,17 +50,16 @@ class AlphaEnv(gym.Env):
 
         self._ctrl_low  = self.model.actuator_ctrlrange[:, 0].copy()
         self._ctrl_high = self.model.actuator_ctrlrange[:, 1].copy()
-        self._ctrl_half = (self._ctrl_high - self._ctrl_low) / 2.0
 
         # Índices de actuadores: piernas (10) y brazos (6)
         self._leg_ctrl_idx = np.array([0, 1, 2, 3, 4, 8, 9, 10, 11, 12], dtype=int)
         self._arm_ctrl_idx = np.array([5, 6, 7, 13, 14, 15], dtype=int)
         self._leg_obs_idx  = np.array([0, 1, 2, 3, 4, 8, 9, 10, 11, 12], dtype=int)
-        # Índices en qpos/qvel para fijar brazos (offset 7 en qpos, 6 en qvel)
+        # Índices en qpos/qvel para fijar brazos
         self._arm_qpos_idx = np.array([7+5, 7+6, 7+7, 7+13, 7+14, 7+15], dtype=int)
         self._arm_qvel_idx = np.array([6+5, 6+6, 6+7, 6+13, 6+14, 6+15], dtype=int)
 
-        n_act = len(self._leg_ctrl_idx)   # 10 (solo piernas)
+        n_act = len(self._leg_ctrl_idx)
         n_obs = self._get_obs().shape[0]
 
         self.action_space = spaces.Box(
@@ -64,17 +71,23 @@ class AlphaEnv(gym.Env):
         )
 
         self._renderer = None
-
         self._prev_action = np.zeros(len(self._leg_ctrl_idx), dtype=np.float32)
 
-        self._left_leg_id  = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "Left_Leg_Link")
-        self._right_leg_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "Right_Leg_link")
+        # Cuerpos de los pies (más precisos que las espinillas para detectar apoyo)
+        self._lf_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "Left_Feet_link")
+        self._rf_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "Right_Feet_link")
+
+        # Índices de ángulo de tobillo adelante/atrás en qpos[7:]
+        # qpos[7+3]  = Left_Ankle_link_joint  (L_ank_fwd, MuJoCo izq = físico der)
+        # qpos[7+11] = Right_Ankle_link_joint (R_ank_fwd, MuJoCo der = físico izq)
+        self._lank_fwd_idx = 7 + 3
+        self._rank_fwd_idx = 7 + 11
 
     def _get_obs(self):
         qpos = self.data.qpos.flat.copy()
         qvel = self.data.qvel.flat.copy()
-        leg_qpos = qpos[7:][self._leg_obs_idx]   # 10 joints de piernas
-        leg_qvel = qvel[6:][self._leg_obs_idx]   # 10 velocidades de piernas
+        leg_qpos = qpos[7:][self._leg_obs_idx]
+        leg_qvel = qvel[6:][self._leg_obs_idx]
         # 5 (pose torso) + 6 (vel torso) + 10 + 10 = 31D
         return np.concatenate([qpos[2:7], qvel[0:6], leg_qpos, leg_qvel]).astype(np.float32)
 
@@ -110,8 +123,6 @@ class AlphaEnv(gym.Env):
             self.data.ctrl[:] = full_ctrl
             for _ in range(_FRAME_SKIP):
                 mujoco.mj_step(self.model, self.data)
-            # Fijar brazos pegados al cuerpo (los actuadores de brazos son motor,
-            # torque=0 no los sujeta; hay que fijar qpos y qvel directamente)
             self.data.qpos[self._arm_qpos_idx] = 0.0
             self.data.qvel[self._arm_qvel_idx] = 0.0
             mujoco.mj_forward(self.model, self.data)
@@ -120,33 +131,27 @@ class AlphaEnv(gym.Env):
 
         root_z = self.data.qpos[2]
         up_z   = self._torso_up_z()
-
         terminated = bool(root_z < _FALL_Z or up_z < _TILT_Z)
 
         x_velocity = self.data.qvel[0]
         y_velocity = self.data.qvel[1]
 
-        # =========================
-        # 🦶 DETECCIÓN DE PIERNAS
-        # =========================
-        left_pos  = self.data.xpos[self._left_leg_id]
-        right_pos = self.data.xpos[self._right_leg_id]
+        # ── Posiciones de los pies ────────────────────────────────────────────
+        lf_pos = self.data.xpos[self._lf_id]
+        rf_pos = self.data.xpos[self._rf_id]
+        lf_z, lf_x = float(lf_pos[2]), float(lf_pos[0])
+        rf_z, rf_x = float(rf_pos[2]), float(rf_pos[0])
 
-        left_x, left_z   = left_pos[0], left_pos[2]
-        right_x, right_z = right_pos[0], right_pos[2]
+        lf_stance = lf_z < _STANCE_Z   # pie izq (MuJoCo) apoyado
+        rf_stance = rf_z < _STANCE_Z   # pie der (MuJoCo) apoyado
 
-        if left_x < right_x:
-            rear_z  = left_z
-            front_z = right_z
-            rear_vx = self.data.cvel[self._left_leg_id][3]
+        # Pie trasero y delantero por posición X
+        if lf_x < rf_x:
+            rear_z, front_z = lf_z, rf_z
         else:
-            rear_z  = right_z
-            front_z = left_z
-            rear_vx = self.data.cvel[self._right_leg_id][3]
+            rear_z, front_z = rf_z, lf_z
 
-        # =========================
-        # 🎯 REWARDS
-        # =========================
+        # ── Rewards base ──────────────────────────────────────────────────────
         forward_reward = _FORWARD_WEIGHT * max(0.0, x_velocity)
         alive_bonus    = _ALIVE_BONUS
         upright_reward = _UPRIGHT_WEIGHT * up_z
@@ -155,55 +160,75 @@ class AlphaEnv(gym.Env):
         lateral_cost = _LATERAL_COST_WEIGHT * y_velocity ** 2
         yaw_cost     = _YAW_COST_WEIGHT * self.data.qvel[5] ** 2
 
-        # 🔥 solo pierna trasera
-        foot_height_reward = _FOOT_HEIGHT_WEIGHT * max(0.0, rear_z - 0.06)
+        # Levantamiento del pie trasero (swing)
+        foot_height_reward = _FOOT_HEIGHT_WEIGHT * max(0.0, rear_z - _STANCE_Z)
 
-        # 🔥 push-off real
-        push_off_reward = _PUSH_OFF_WEIGHT * max(0.0, -rear_vx)
+        # Penalizar levantar el pie delantero antes de apoyar
+        front_lift_penalty = _FRONT_LIFT_PENALTY * max(0.0, front_z - 0.05)
 
-        # 🔥 penaliza levantar la delantera
-        front_lift_penalty = _FRONT_LIFT_PENALTY * max(0.0, front_z - 0.08)
-
-        # 🔥 stance suave
-        double_support = (left_z < 0.06 and right_z < 0.06)
+        # Penalizar doble apoyo prolongado
+        double_support = lf_stance and rf_stance
         stance_penalty = _STANCE_PENALTY if double_support else 0.0
-        slow_penalty   = -2.0 if x_velocity < 0.02 else 0.0
 
-        # Premio por tener el COM desplazado sobre el pie de apoyo (eje Y)
-        com_y   = float(self.data.subtree_com[1][1])
-        _SWING_Z = 0.06
-        com_lateral_reward = 0.0
-        if left_z > _SWING_Z and right_z <= _SWING_Z:
-            # pie izq levantado → apoyo derecho → COM debe estar cerca de right_pos[1]
-            com_lateral_reward = _COM_LATERAL_WEIGHT * -abs(com_y - float(right_pos[1]))
-        elif right_z > _SWING_Z and left_z <= _SWING_Z:
-            # pie der levantado → apoyo izquierdo → COM debe estar cerca de left_pos[1]
-            com_lateral_reward = _COM_LATERAL_WEIGHT * -abs(com_y - float(left_pos[1]))
+        # Velocidad mínima
+        slow_penalty = _SLOW_PENALTY if x_velocity < 0.02 else 0.0
 
+        # ── Bonus por apoyo simple claro ──────────────────────────────────────
+        single_support = lf_stance != rf_stance   # exactamente un pie en el aire
+        single_supp_bonus = _SINGLE_SUPP_BONUS if single_support else 0.0
+
+        # ── COG sobre el pie de apoyo (X + Y) ────────────────────────────────
+        com_x = float(self.data.subtree_com[1][0])
+        com_y = float(self.data.subtree_com[1][1])
+        com_support_reward = 0.0
+        if lf_stance and not rf_stance:
+            # izq apoyado, der en swing → COG sobre pie izq
+            dx = com_x - float(lf_pos[0])
+            dy = com_y - float(lf_pos[1])
+            com_support_reward = -_COM_SUPPORT_WEIGHT * (dx*dx + dy*dy) ** 0.5
+        elif rf_stance and not lf_stance:
+            # der apoyado, izq en swing → COG sobre pie der
+            dx = com_x - float(rf_pos[0])
+            dy = com_y - float(rf_pos[1])
+            com_support_reward = -_COM_SUPPORT_WEIGHT * (dx*dx + dy*dy) ** 0.5
+
+        # ── Penalizar inclinación tobillo en pie de apoyo ─────────────────────
+        # Impide que el robot use ank_fwd para propulsarse (no funciona en el real)
+        l_ank_fwd = float(self.data.qpos[self._lank_fwd_idx])
+        r_ank_fwd = float(self.data.qpos[self._rank_fwd_idx])
+        ankle_cost = 0.0
+        if lf_stance:
+            ankle_cost += _ANKLE_COST_WEIGHT * l_ank_fwd ** 2
+        if rf_stance:
+            ankle_cost += _ANKLE_COST_WEIGHT * r_ank_fwd ** 2
+
+        # ── Reward total ──────────────────────────────────────────────────────
         reward = (
             forward_reward
             + alive_bonus
             + upright_reward
             + foot_height_reward
-            + push_off_reward
-            + com_lateral_reward
+            + com_support_reward
+            + single_supp_bonus
             - ctrl_cost
             - lateral_cost
             - yaw_cost
+            - ankle_cost
             - front_lift_penalty
             + stance_penalty
             + slow_penalty
         )
 
         self._prev_action = action.copy()
-
         truncated = False
 
         info = {
-            "x_velocity": x_velocity,
-            "rear_z": rear_z,
-            "front_z": front_z,
-            "push_off": push_off_reward,
+            "x_velocity":     x_velocity,
+            "rear_z":         rear_z,
+            "front_z":        front_z,
+            "com_support":    com_support_reward,
+            "ankle_cost":     ankle_cost,
+            "single_support": single_support,
         }
 
         if self.render_mode == "human":

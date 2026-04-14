@@ -1,1 +1,0 @@
-python genera.py exportado_por_sw_ubtech.aesx claude_simulation_servo_export.csv salida.aesx

@@ -1,1 +1,0 @@
-python extrae.py exportado_por_sw_ubtech.aesx
