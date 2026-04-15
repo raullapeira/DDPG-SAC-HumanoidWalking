@@ -1,1 +1,2 @@
-C:\Users\PcCom\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\python.exe: can't open file 'C:\\sw\\robots\\coreo_2026_Github\\DDPG-SAC-HumanoidWalking\\tools\\make_com_gif_transparent.py': [Errno 2] No such file or directory
+Actor cargado: obs=31D  act=10D
+GIF guardado: C:\sw\robots\coreo_2026_Github\DDPG-SAC-HumanoidWalking\media\14_04_2026_cogv3\com_step_0250000.gif  (44 frames)  [CAIDO]

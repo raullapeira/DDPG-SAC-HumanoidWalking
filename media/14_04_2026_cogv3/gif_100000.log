@@ -1,13 +1,1 @@
-Traceback (most recent call last):
-  File "C:\sw\robots\coreo_2026_Github\DDPG-SAC-HumanoidWalking\tools\make_checkpoint_gif_v2.py", line 140, in <module>
-    main()
-  File "C:\sw\robots\coreo_2026_Github\DDPG-SAC-HumanoidWalking\tools\make_checkpoint_gif_v2.py", line 51, in main
-    base    = pathlib.Path(_XML_V2).read_text()
-              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\pathlib.py", line 1058, in read_text
-    with self.open(mode='r', encoding=encoding, errors=errors) as f:
-         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\pathlib.py", line 1044, in open
-    return io.open(self, mode, buffering, encoding, errors, newline)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-FileNotFoundError: [Errno 2] No such file or directory: 'C:\\sw\\robots\\coreo_2026_Github\\DDPG-SAC-HumanoidWalking\\robot\\reverse_eng_v2\\alpha_single.xml'
+GIF saved: C:\sw\robots\coreo_2026_Github\DDPG-SAC-HumanoidWalking\media\14_04_2026_cogv3\step_0100000_caido.gif  (36 frames)

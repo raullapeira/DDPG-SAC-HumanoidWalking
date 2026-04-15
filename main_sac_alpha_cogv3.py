@@ -23,7 +23,7 @@ import datetime
 
 _CSV_PATH  = os.path.join(_HERE, "training_log_cogv3.csv")
 _TODAY     = datetime.date.today().strftime("%d_%m_%Y")
-_MEDIA_DIR = os.path.join(_HERE, "media", f"{_TODAY}_cogv3")
+_MEDIA_DIR = os.path.join(_HERE, "media", f"{_TODAY}_cogv3_pie_plano")
 os.makedirs(_MEDIA_DIR, exist_ok=True)
 
 _GIF_SCRIPT     = os.path.join(_HERE, "tools", "training", "make_checkpoint_gif_v2.py")

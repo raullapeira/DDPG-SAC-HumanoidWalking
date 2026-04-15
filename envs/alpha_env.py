@@ -30,6 +30,8 @@ _SLOW_PENALTY        = -2.0  # penaliza velocidad casi nula
 # v14: sin push_off (causaba propulsión por inclinación de tobillo)
 # Nuevo: penalizar tobillo en pie de apoyo, COG sobre pie de apoyo en 2D
 _ANKLE_COST_WEIGHT   = 2.0   # penaliza ank_fwd^2 cuando el pie está apoyado
+_FEET_COST_WEIGHT    = 4.0   # penaliza puntera (Feet joint) en pie de apoyo
+_FOOT_FLAT_WEIGHT    = 8.0   # penaliza inclinación real del pie respecto al suelo
 _COM_SUPPORT_WEIGHT  = 8.0   # distancia 2D del COG al pie de apoyo (era 4.0, solo Y)
 _SINGLE_SUPP_BONUS   = 0.3   # bonus por apoyo simple claro (un pie levantado >_SWING_Z)
 
@@ -80,8 +82,12 @@ class AlphaEnv(gym.Env):
         # Índices de ángulo de tobillo adelante/atrás en qpos[7:]
         # qpos[7+3]  = Left_Ankle_link_joint  (L_ank_fwd, MuJoCo izq = físico der)
         # qpos[7+11] = Right_Ankle_link_joint (R_ank_fwd, MuJoCo der = físico izq)
-        self._lank_fwd_idx = 7 + 3
-        self._rank_fwd_idx = 7 + 11
+        # qpos[7+4]  = Left_Feet_link_joint   (puntera izq)
+        # qpos[7+12] = Right_Feet_link_joint  (puntera der)
+        self._lank_fwd_idx  = 7 + 3
+        self._rank_fwd_idx  = 7 + 11
+        self._lfeet_idx     = 7 + 4
+        self._rfeet_idx     = 7 + 12
 
     def _get_obs(self):
         qpos = self.data.qpos.flat.copy()
@@ -192,15 +198,34 @@ class AlphaEnv(gym.Env):
             dy = com_y - float(rf_pos[1])
             com_support_reward = -_COM_SUPPORT_WEIGHT * (dx*dx + dy*dy) ** 0.5
 
-        # ── Penalizar inclinación tobillo en pie de apoyo ─────────────────────
-        # Impide que el robot use ank_fwd para propulsarse (no funciona en el real)
-        l_ank_fwd = float(self.data.qpos[self._lank_fwd_idx])
-        r_ank_fwd = float(self.data.qpos[self._rank_fwd_idx])
+        # ── Penalizar tobillo y puntera en pie de apoyo ───────────────────────
+        # Ankle: impide inclinación del tobillo para propulsarse
+        # Feet:  impide usar la puntera para empujar (el joint Feet no existe en el real)
+        l_ank_fwd  = float(self.data.qpos[self._lank_fwd_idx])
+        r_ank_fwd  = float(self.data.qpos[self._rank_fwd_idx])
+        l_feet_fwd = float(self.data.qpos[self._lfeet_idx])
+        r_feet_fwd = float(self.data.qpos[self._rfeet_idx])
         ankle_cost = 0.0
         if lf_stance:
             ankle_cost += _ANKLE_COST_WEIGHT * l_ank_fwd ** 2
+            ankle_cost += _FEET_COST_WEIGHT  * l_feet_fwd ** 2
         if rf_stance:
             ankle_cost += _ANKLE_COST_WEIGHT * r_ank_fwd ** 2
+            ankle_cost += _FEET_COST_WEIGHT  * r_feet_fwd ** 2
+
+        # ── Penalizar inclinación real del pie respecto al suelo ──────────────
+        # xmat[body_id] = rotation matrix (row-major). La fila 2 da los componentes
+        # world-Z de cada eje local. Si el pie está plano, algún eje local apunta
+        # exactamente a world-Z → max(abs(fila2)) = 1.0 → tilt = 0.
+        lf_mat   = self.data.xmat[self._lf_id].reshape(3, 3)
+        rf_mat   = self.data.xmat[self._rf_id].reshape(3, 3)
+        lf_tilt  = 1.0 - float(np.max(np.abs(lf_mat[2, :])))
+        rf_tilt  = 1.0 - float(np.max(np.abs(rf_mat[2, :])))
+        foot_flat_cost = 0.0
+        if lf_stance:
+            foot_flat_cost += _FOOT_FLAT_WEIGHT * lf_tilt
+        if rf_stance:
+            foot_flat_cost += _FOOT_FLAT_WEIGHT * rf_tilt
 
         # ── Reward total ──────────────────────────────────────────────────────
         reward = (
@@ -214,6 +239,7 @@ class AlphaEnv(gym.Env):
             - lateral_cost
             - yaw_cost
             - ankle_cost
+            - foot_flat_cost
             - front_lift_penalty
             + stance_penalty
             + slow_penalty
@@ -228,6 +254,7 @@ class AlphaEnv(gym.Env):
             "front_z":        front_z,
             "com_support":    com_support_reward,
             "ankle_cost":     ankle_cost,
+            "foot_flat_cost": foot_flat_cost,
             "single_support": single_support,
         }
 
