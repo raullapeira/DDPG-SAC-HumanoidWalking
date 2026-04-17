@@ -256,6 +256,10 @@ class AlphaEnv(gym.Env):
             "ankle_cost":     ankle_cost,
             "foot_flat_cost": foot_flat_cost,
             "single_support": single_support,
+            "lf_tilt":        lf_tilt,
+            "rf_tilt":        rf_tilt,
+            "lf_z":           lf_z,
+            "rf_z":           rf_z,
         }
 
         if self.render_mode == "human":

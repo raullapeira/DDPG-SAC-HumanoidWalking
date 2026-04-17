@@ -164,6 +164,10 @@ while global_step < TOTAL_TIMESTEPS:
     episode_reward = 0
     done = False
 
+    # acumuladores de debug por episodio
+    _ep_lf_tilt, _ep_rf_tilt = [], []
+    _ep_lf_z,    _ep_rf_z    = [], []
+
     while not done:
         global_step += 1
         state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
@@ -173,6 +177,11 @@ while global_step < TOTAL_TIMESTEPS:
 
         next_state, reward, terminated, truncated, info = env.step(action)
         done = terminated or truncated
+
+        _ep_lf_tilt.append(info["lf_tilt"])
+        _ep_rf_tilt.append(info["rf_tilt"])
+        _ep_lf_z.append(info["lf_z"])
+        _ep_rf_z.append(info["rf_z"])
 
         episode_reward += reward
         replay_buffer.put((state, action, reward, next_state, float(done)))
@@ -246,8 +255,33 @@ while global_step < TOTAL_TIMESTEPS:
                 stdout=_com_log, stderr=_com_log,
             )
 
+    # ── stats de debug del episodio ──────────────────────────────────────────
+    avg_lf_tilt = sum(_ep_lf_tilt) / len(_ep_lf_tilt) if _ep_lf_tilt else 0.0
+    avg_rf_tilt = sum(_ep_rf_tilt) / len(_ep_rf_tilt) if _ep_rf_tilt else 0.0
+    max_lf_tilt = max(_ep_lf_tilt) if _ep_lf_tilt else 0.0
+    max_rf_tilt = max(_ep_rf_tilt) if _ep_rf_tilt else 0.0
+    avg_lf_z    = sum(_ep_lf_z)    / len(_ep_lf_z)    if _ep_lf_z    else 0.0
+    avg_rf_z    = sum(_ep_rf_z)    / len(_ep_rf_z)    if _ep_rf_z    else 0.0
+    max_lf_z    = max(_ep_lf_z)    if _ep_lf_z    else 0.0
+    max_rf_z    = max(_ep_rf_z)    if _ep_rf_z    else 0.0
+
+    writer.add_scalar("Foot/lf_tilt_avg", avg_lf_tilt, global_step)
+    writer.add_scalar("Foot/rf_tilt_avg", avg_rf_tilt, global_step)
+    writer.add_scalar("Foot/lf_tilt_max", max_lf_tilt, global_step)
+    writer.add_scalar("Foot/rf_tilt_max", max_rf_tilt, global_step)
+    writer.add_scalar("Foot/lf_z_avg",    avg_lf_z,    global_step)
+    writer.add_scalar("Foot/rf_z_avg",    avg_rf_z,    global_step)
+    writer.add_scalar("Foot/lf_z_max",    max_lf_z,    global_step)
+    writer.add_scalar("Foot/rf_z_max",    max_rf_z,    global_step)
+
     writer.add_scalar("Reward/episode", episode_reward, global_step)
-    print(f"Episode {episode}  reward={episode_reward:.2f}  step={global_step}")
+    print(
+        f"Ep {episode:4d} | step {global_step:7d} | reward {episode_reward:7.2f}"
+        f" | tilt L {avg_lf_tilt:.3f}(max {max_lf_tilt:.3f})"
+        f" R {avg_rf_tilt:.3f}(max {max_rf_tilt:.3f})"
+        f" | alt  L {avg_lf_z:.3f}(max {max_lf_z:.3f})"
+        f" R {avg_rf_z:.3f}(max {max_rf_z:.3f})"
+    )
 
     with open(_CSV_PATH, mode="a", newline="") as f:
         csv.writer(f).writerow([global_step, episode, episode_reward])
