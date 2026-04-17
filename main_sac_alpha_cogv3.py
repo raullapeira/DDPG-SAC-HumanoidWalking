@@ -34,11 +34,11 @@ if not os.path.exists(_CSV_PATH):
         csv.writer(f).writerow(["step", "episode", "reward"])
 
 LEARNING_RATE  = 3e-4
-GAMMA          = 0.99
-TAU            = 0.005
+GAMMA          = 0.99    # factor de descuento: recompensas futuras valen GAMMA^t menos
+TAU            = 0.005   # mezcla lenta del critic objetivo: θ' ← τθ + (1-τ)θ'
 BUFFER_SIZE    = int(1e6)
 BATCH_SIZE     = 256
-LEARNING_STARTS = 1000
+LEARNING_STARTS = 1000   # pasos de exploración aleatoria antes de empezar a entrenar
 TOTAL_TIMESTEPS = 2_000_000
 SAVE_INTERVAL   = 50000
 
@@ -48,6 +48,7 @@ writer = SummaryWriter("runs_v2/sac_alpha_cogv3")
 
 class ReplayBuffer:
     def __init__(self, max_size=BUFFER_SIZE):
+        # deque con maxlen descarta automáticamente la transición más antigua cuando está lleno
         self.buffer = deque(maxlen=max_size)
 
     def put(self, transition):
@@ -56,6 +57,7 @@ class ReplayBuffer:
     def sample(self, batch_size):
         batch = random.sample(self.buffer, batch_size)
         states, actions, rewards, next_states, dones = zip(*batch)
+        # unsqueeze(1) convierte rewards y dones de shape (N,) a (N,1) para operar con Q-values
         return (torch.FloatTensor(np.array(states)).to(device),
                 torch.FloatTensor(np.array(actions)).to(device),
                 torch.FloatTensor(np.array(rewards)).unsqueeze(1).to(device),
@@ -73,28 +75,33 @@ class Actor(nn.Module):
             nn.Linear(state_dim, 256), nn.ReLU(),
             nn.Linear(256, 256), nn.ReLU(),
         )
-        self.mu      = nn.Linear(256, action_dim)
-        self.log_std = nn.Linear(256, action_dim)
+        self.mu      = nn.Linear(256, action_dim)   # media de la distribución gaussiana
+        self.log_std = nn.Linear(256, action_dim)   # log de la desviación estándar
         self.max_action = max_action
 
     def forward(self, state):
         x = self.net(state)
         mu = self.mu(x)
+        # Clamp del log_std para evitar std demasiado pequeña (<e^-20) o grande (>e^2)
         log_std = torch.clamp(self.log_std(x), -20, 2)
         return mu, log_std.exp()
 
     def sample(self, state):
         mu, std = self.forward(state)
         normal  = torch.distributions.Normal(mu, std)
-        x_t     = normal.rsample()
-        y_t     = torch.tanh(x_t)
+        x_t     = normal.rsample()          # muestra con reparametrización (permite gradientes)
+        y_t     = torch.tanh(x_t)           # squash a (-1, 1)
         action  = y_t * self.max_action
+        # log_prob de la distribución gaussiana antes del squash
         log_prob = normal.log_prob(x_t).sum(1, keepdim=True)
+        # Corrección de Jacobiano por la transformación tanh: log|det(dy/dx)| = Σ log(1 - tanh²)
+        # Sin esta corrección, log_prob estaría mal calibrado y alpha aprendería entropía incorrecta
         log_prob -= torch.log(1 - y_t.pow(2) + 1e-6).sum(1, keepdim=True)
         return action, log_prob
 
 
 class Critic(nn.Module):
+    # Doble critic (Q1, Q2) para reducir sobreestimación del valor (truco de TD3/SAC)
     def __init__(self, state_dim, action_dim):
         super().__init__()
         self.q1 = nn.Sequential(
@@ -109,7 +116,7 @@ class Critic(nn.Module):
         )
 
     def forward(self, state, action):
-        sa = torch.cat([state, action], dim=1)
+        sa = torch.cat([state, action], dim=1)   # concatenamos estado y acción como entrada
         return self.q1(sa), self.q2(sa)
 
 
@@ -125,10 +132,13 @@ actor_optimizer = optim.Adam(actor.parameters(), lr=LEARNING_RATE)
 
 critic = Critic(state_dim, action_dim).to(device)
 critic_target = Critic(state_dim, action_dim).to(device)
-critic_target.load_state_dict(critic.state_dict())
+critic_target.load_state_dict(critic.state_dict())   # critic objetivo empieza igual que el principal
 critic_optimizer = optim.Adam(critic.parameters(), lr=LEARNING_RATE)
 
+# SAC con alpha automático: alpha regula el peso de la entropía en el objetivo
+# target_entropy es el valor deseado de entropía; la heurística -action_dim funciona bien en práctica
 target_entropy = -action_dim
+# Usamos log_alpha en vez de alpha directamente para garantizar alpha > 0 siempre
 log_alpha      = torch.zeros(1, requires_grad=True, device=device)
 alpha_optimizer = optim.Adam([log_alpha], lr=LEARNING_RATE)
 
@@ -148,6 +158,7 @@ if _ckpts:
     actor.load_state_dict(_ckpt["actor"])
     critic.load_state_dict(_ckpt["critic"])
     critic_target.load_state_dict(_ckpt["critic_target"])
+    # log_alpha guardado como tensor; hay que recrear el optimizador apuntando al nuevo tensor
     log_alpha = _ckpt["log_alpha"].to(device).requires_grad_(True)
     alpha_optimizer  = optim.Adam([log_alpha], lr=LEARNING_RATE)
     alpha_optimizer.load_state_dict(_ckpt["alpha_optimizer"])
@@ -184,40 +195,54 @@ while global_step < TOTAL_TIMESTEPS:
         _ep_rf_z.append(info["rf_z"])
 
         episode_reward += reward
+        # Guardamos la transición (s, a, r, s', done) en el replay buffer
         replay_buffer.put((state, action, reward, next_state, float(done)))
         state = next_state
 
         if replay_buffer.size() > LEARNING_STARTS:
             states, actions, rewards, next_states, dones = replay_buffer.sample(BATCH_SIZE)
 
+            # ── 1. Actualizar alpha (temperatura de entropía) ─────────────────
             new_actions, log_pi = actor.sample(states)
             q1_new, q2_new = critic(states, new_actions)
-            q_min = torch.min(q1_new, q2_new)
+            q_min = torch.min(q1_new, q2_new)   # usamos el Q mínimo para evitar sobreestimación
 
+            # alpha_loss: ajusta alpha para que la entropía media se acerque a target_entropy
+            # Si log_pi >> -target_entropy → política demasiado determinista → alpha sube
             alpha_loss = -(log_alpha * (log_pi + target_entropy).detach()).mean()
             alpha_optimizer.zero_grad()
             alpha_loss.backward()
             alpha_optimizer.step()
-            alpha = log_alpha.exp()
+            alpha = log_alpha.exp()   # alpha siempre positivo gracias a exp
 
+            # ── 2. Actualizar actor ───────────────────────────────────────────
+            # El actor maximiza Q - alpha * log_pi (Q + entropía ponderada)
             actor_loss = (alpha * log_pi - q_min).mean()
             actor_optimizer.zero_grad()
             actor_loss.backward()
             actor_optimizer.step()
 
+            # ── 3. Calcular target Q (con critic objetivo y sin gradientes) ───
             with torch.no_grad():
                 next_actions, next_log_pi = actor.sample(next_states)
                 q1_next, q2_next = critic_target(next_states, next_actions)
+                # Target de Bellman con regularización de entropía: Q - alpha * log_pi
                 q_target = torch.min(q1_next, q2_next) - alpha * next_log_pi
+                # (1-done) cancela el valor futuro si el episodio terminó
                 target_q = rewards + (1 - dones) * GAMMA * q_target
 
+            # ── 4. Actualizar critic ──────────────────────────────────────────
             q1, q2 = critic(states, actions)
+            # Entrenamos ambas cabezas Q contra el mismo target; reducir las dos reduce sesgo
             critic_loss = nn.MSELoss()(q1, target_q) + nn.MSELoss()(q2, target_q)
 
             critic_optimizer.zero_grad()
             critic_loss.backward()
             critic_optimizer.step()
 
+            # ── 5. Actualización suave del critic objetivo (Polyak) ───────────
+            # θ'_nuevo = TAU * θ_principal + (1-TAU) * θ'_viejo
+            # TAU pequeño (0.005) hace que el objetivo sea estable y reduzca divergencia
             for param, target_param in zip(critic.parameters(), critic_target.parameters()):
                 target_param.data.copy_(TAU * param.data + (1 - TAU) * target_param.data)
 
@@ -239,6 +264,7 @@ while global_step < TOTAL_TIMESTEPS:
             }, ckpt_path)
             print(f"Checkpoint guardado en step {global_step}")
 
+            # Lanzamos los GIFs en procesos separados para no bloquear el entrenamiento
             _gif_log = open(os.path.join(_MEDIA_DIR, f"gif_{global_step}.log"), "w")
             subprocess.Popen(
                 [sys.executable, _GIF_SCRIPT,

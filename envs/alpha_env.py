@@ -9,11 +9,11 @@ _XML_PATH = os.path.join(
 )
 
 _INIT_Z = 0.298
-_FALL_Z = 0.12
-_TILT_Z = 0.7
+_FALL_Z = 0.12   # altura mínima del torso antes de considerar caída
+_TILT_Z = 0.7    # componente Z del eje "arriba" del torso; por debajo → demasiado inclinado
 
-_FRAME_SKIP    = 5
-_ACTION_REPEAT = 4
+_FRAME_SKIP    = 5   # pasos de física por llamada a mj_step
+_ACTION_REPEAT = 4   # veces que se repite la misma acción antes de devolver obs
 
 _CTRL_COST_WEIGHT    = 0.01
 _FORWARD_WEIGHT      = 5.0
@@ -50,20 +50,23 @@ class AlphaEnv(gym.Env):
         self.model = mujoco.MjModel.from_xml_path(xml_path)
         self.data  = mujoco.MjData(self.model)
 
+        # Límites de control definidos en el XML para cada actuador
         self._ctrl_low  = self.model.actuator_ctrlrange[:, 0].copy()
         self._ctrl_high = self.model.actuator_ctrlrange[:, 1].copy()
 
         # Índices de actuadores: piernas (10) y brazos (6)
+        # El robot tiene 16 actuadores; solo controlamos las 10 articulaciones de pierna
         self._leg_ctrl_idx = np.array([0, 1, 2, 3, 4, 8, 9, 10, 11, 12], dtype=int)
         self._arm_ctrl_idx = np.array([5, 6, 7, 13, 14, 15], dtype=int)
         self._leg_obs_idx  = np.array([0, 1, 2, 3, 4, 8, 9, 10, 11, 12], dtype=int)
-        # Índices en qpos/qvel para fijar brazos
+        # Índices en qpos/qvel para fijar brazos en neutro tras cada paso de física
         self._arm_qpos_idx = np.array([7+5, 7+6, 7+7, 7+13, 7+14, 7+15], dtype=int)
         self._arm_qvel_idx = np.array([6+5, 6+6, 6+7, 6+13, 6+14, 6+15], dtype=int)
 
         n_act = len(self._leg_ctrl_idx)
         n_obs = self._get_obs().shape[0]
 
+        # El actor emite valores en [-1, 1]; _denorm_action los escala al rango real
         self.action_space = spaces.Box(
             low=-1.0, high=1.0, shape=(n_act,), dtype=np.float32
         )
@@ -92,18 +95,25 @@ class AlphaEnv(gym.Env):
     def _get_obs(self):
         qpos = self.data.qpos.flat.copy()
         qvel = self.data.qvel.flat.copy()
-        leg_qpos = qpos[7:][self._leg_obs_idx]
-        leg_qvel = qvel[6:][self._leg_obs_idx]
-        # 5 (pose torso) + 6 (vel torso) + 10 + 10 = 31D
+        # qpos[0:7] = posición+cuaternión del torso (cuerpo raíz); lo descartamos salvo z+quat
+        # qpos[2:7] = z, qw, qx, qy, qz → altura y orientación del torso (5 valores)
+        # qvel[0:6] = velocidad lineal + angular del torso (6 valores)
+        leg_qpos = qpos[7:][self._leg_obs_idx]   # ángulos de las 10 articulaciones de pierna
+        leg_qvel = qvel[6:][self._leg_obs_idx]   # velocidades angulares de esas articulaciones
+        # Observación total: 5 + 6 + 10 + 10 = 31 dimensiones
         return np.concatenate([qpos[2:7], qvel[0:6], leg_qpos, leg_qvel]).astype(np.float32)
 
     def _denorm_action(self, action):
+        # La red emite [-1, 1]; este método lo escala al rango físico de cada servo
         low  = self._ctrl_low[self._leg_ctrl_idx]
         high = self._ctrl_high[self._leg_ctrl_idx]
         half = (high - low) / 2.0
         return np.clip(action * half, low, high)
 
     def _torso_up_z(self):
+        # Extrae la componente Z del eje "arriba" del torso a partir del cuaternión.
+        # Si el torso está perfectamente vertical, devuelve 1.0.
+        # Fórmula: componente Z de la matriz de rotación del quaternion (fila 2, col 2).
         qw, qx, qy, qz = self.data.qpos[3:7]
         return 1.0 - 2.0 * (qx * qx + qy * qy)
 
@@ -111,6 +121,8 @@ class AlphaEnv(gym.Env):
         super().reset(seed=seed)
         mujoco.mj_resetData(self.model, self.data)
 
+        # Perturbación aleatoria pequeña en los ángulos de articulación para
+        # evitar que el agente memorice una postura inicial fija
         rng = np.random.default_rng(seed)
         n_joints = self.model.nq - 7
         self.data.qpos[7:] += rng.uniform(-0.05, 0.05, n_joints)
@@ -123,27 +135,33 @@ class AlphaEnv(gym.Env):
     def step(self, action):
         action = np.clip(action, -1.0, 1.0)
 
+        # Repetimos la misma acción _ACTION_REPEAT veces, cada vez integrando
+        # _FRAME_SKIP pasos de física. Total: 4×5 = 20 pasos de física por step del entorno.
         for _ in range(_ACTION_REPEAT):
             full_ctrl = np.zeros(self.model.nu, dtype=np.float64)
             full_ctrl[self._leg_ctrl_idx] = self._denorm_action(action)
             self.data.ctrl[:] = full_ctrl
             for _ in range(_FRAME_SKIP):
                 mujoco.mj_step(self.model, self.data)
+            # Forzamos brazos en neutro después de cada grupo de pasos de física.
+            # El robot real no mueve brazos; si los dejáramos libres el simulador
+            # los usaría para equilibrarse, lo que no sería reproducible en el real.
             self.data.qpos[self._arm_qpos_idx] = 0.0
             self.data.qvel[self._arm_qvel_idx] = 0.0
             mujoco.mj_forward(self.model, self.data)
 
         obs = self._get_obs()
 
+        # Condición de caída: torso demasiado bajo O demasiado inclinado
         root_z = self.data.qpos[2]
         up_z   = self._torso_up_z()
         terminated = bool(root_z < _FALL_Z or up_z < _TILT_Z)
 
-        x_velocity = self.data.qvel[0]
-        y_velocity = self.data.qvel[1]
+        x_velocity = self.data.qvel[0]   # velocidad de avance (eje X mundo)
+        y_velocity = self.data.qvel[1]   # velocidad lateral (penalizada)
 
         # ── Posiciones de los pies ────────────────────────────────────────────
-        lf_pos = self.data.xpos[self._lf_id]
+        lf_pos = self.data.xpos[self._lf_id]   # posición world del cuerpo Left_Feet_link
         rf_pos = self.data.xpos[self._rf_id]
         lf_z, lf_x = float(lf_pos[2]), float(lf_pos[0])
         rf_z, rf_x = float(rf_pos[2]), float(rf_pos[0])
@@ -151,39 +169,43 @@ class AlphaEnv(gym.Env):
         lf_stance = lf_z < _STANCE_Z   # pie izq (MuJoCo) apoyado
         rf_stance = rf_z < _STANCE_Z   # pie der (MuJoCo) apoyado
 
-        # Pie trasero y delantero por posición X
+        # Identificamos pie trasero y delantero según posición X en el mundo
         if lf_x < rf_x:
             rear_z, front_z = lf_z, rf_z
         else:
             rear_z, front_z = rf_z, lf_z
 
         # ── Rewards base ──────────────────────────────────────────────────────
-        forward_reward = _FORWARD_WEIGHT * max(0.0, x_velocity)
-        alive_bonus    = _ALIVE_BONUS
-        upright_reward = _UPRIGHT_WEIGHT * up_z
+        forward_reward = _FORWARD_WEIGHT * max(0.0, x_velocity)   # solo premia avanzar, no retroceder
+        alive_bonus    = _ALIVE_BONUS                              # reward constante por no caer
+        upright_reward = _UPRIGHT_WEIGHT * up_z                   # premia mantenerse vertical
 
-        ctrl_cost    = _CTRL_COST_WEIGHT * np.sum(np.square(action))
-        lateral_cost = _LATERAL_COST_WEIGHT * y_velocity ** 2
-        yaw_cost     = _YAW_COST_WEIGHT * self.data.qvel[5] ** 2
+        ctrl_cost    = _CTRL_COST_WEIGHT * np.sum(np.square(action))   # penaliza acciones grandes (eficiencia)
+        lateral_cost = _LATERAL_COST_WEIGHT * y_velocity ** 2          # penaliza desviarse lateralmente
+        yaw_cost     = _YAW_COST_WEIGHT * self.data.qvel[5] ** 2       # penaliza rotación sobre el eje vertical
 
-        # Levantamiento del pie trasero (swing)
+        # Premia que el pie TRASERO se levante del suelo durante el swing
         foot_height_reward = _FOOT_HEIGHT_WEIGHT * max(0.0, rear_z - _STANCE_Z)
 
-        # Penalizar levantar el pie delantero antes de apoyar
+        # Penaliza levantar el pie DELANTERO antes de que esté listo para apoyar
         front_lift_penalty = _FRONT_LIFT_PENALTY * max(0.0, front_z - 0.05)
 
-        # Penalizar doble apoyo prolongado
+        # Penaliza que ambos pies estén apoyados a la vez (doble apoyo prolongado = no avanza)
         double_support = lf_stance and rf_stance
         stance_penalty = _STANCE_PENALTY if double_support else 0.0
 
-        # Velocidad mínima
+        # Penaliza velocidad casi nula: evita que el robot aprenda a quedarse quieto
         slow_penalty = _SLOW_PENALTY if x_velocity < 0.02 else 0.0
 
         # ── Bonus por apoyo simple claro ──────────────────────────────────────
-        single_support = lf_stance != rf_stance   # exactamente un pie en el aire
+        # Un pie apoyado y el otro en el aire = paso real; lo premiamos
+        single_support = lf_stance != rf_stance
         single_supp_bonus = _SINGLE_SUPP_BONUS if single_support else 0.0
 
         # ── COG sobre el pie de apoyo (X + Y) ────────────────────────────────
+        # subtree_com[1] = centro de masa del subárbol que empieza en el cuerpo 1 (torso+piernas)
+        # Solo penalizamos cuando hay apoyo simple: el COG debe estar sobre el pie que apoya,
+        # de lo contrario el robot se caería lateralmente.
         com_x = float(self.data.subtree_com[1][0])
         com_y = float(self.data.subtree_com[1][1])
         com_support_reward = 0.0
@@ -191,6 +213,7 @@ class AlphaEnv(gym.Env):
             # izq apoyado, der en swing → COG sobre pie izq
             dx = com_x - float(lf_pos[0])
             dy = com_y - float(lf_pos[1])
+            # Distancia euclídea 2D: penalización proporcional a cuánto se aleja el COG del pie
             com_support_reward = -_COM_SUPPORT_WEIGHT * (dx*dx + dy*dy) ** 0.5
         elif rf_stance and not lf_stance:
             # der apoyado, izq en swing → COG sobre pie der
@@ -207,16 +230,18 @@ class AlphaEnv(gym.Env):
         r_feet_fwd = float(self.data.qpos[self._rfeet_idx])
         ankle_cost = 0.0
         if lf_stance:
-            ankle_cost += _ANKLE_COST_WEIGHT * l_ank_fwd ** 2
+            ankle_cost += _ANKLE_COST_WEIGHT * l_ank_fwd ** 2    # penaliza ángulo²: suave cerca de 0, fuerte lejos
             ankle_cost += _FEET_COST_WEIGHT  * l_feet_fwd ** 2
         if rf_stance:
             ankle_cost += _ANKLE_COST_WEIGHT * r_ank_fwd ** 2
             ankle_cost += _FEET_COST_WEIGHT  * r_feet_fwd ** 2
 
         # ── Penalizar inclinación real del pie respecto al suelo ──────────────
-        # xmat[body_id] = rotation matrix (row-major). La fila 2 da los componentes
-        # world-Z de cada eje local. Si el pie está plano, algún eje local apunta
-        # exactamente a world-Z → max(abs(fila2)) = 1.0 → tilt = 0.
+        # xmat[body_id] es la matriz de rotación 3×3 del cuerpo en coordenadas mundo (row-major).
+        # La fila 2 contiene la proyección de cada eje LOCAL del pie sobre el eje Z del MUNDO.
+        # Si el pie está completamente plano, uno de sus ejes locales apunta exactamente
+        # hacia arriba → max(|fila2|) = 1.0 → tilt = 0.
+        # Si el pie se inclina (toe-off), ese máximo cae → tilt > 0.
         lf_mat   = self.data.xmat[self._lf_id].reshape(3, 3)
         rf_mat   = self.data.xmat[self._rf_id].reshape(3, 3)
         lf_tilt  = 1.0 - float(np.max(np.abs(lf_mat[2, :])))

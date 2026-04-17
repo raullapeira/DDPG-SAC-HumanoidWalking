@@ -1,0 +1,88 @@
+============================================================
+SNIPPETS ARCHIVADOS — scripts borrados pero ideas útiles
+============================================================
+
+------------------------------------------------------------
+1. GIF DE EVOLUCIÓN (todos los checkpoints en un solo GIF)
+   Origen: tools/_obsoletos/eval_gif.py
+   Idea: recorre todos los .pt, graba N segundos de cada uno,
+         les pone label "Step X,XXX" y los concatena en un GIF.
+------------------------------------------------------------
+
+# Uso:
+#   python tools/training/make_evolution_gif.py
+#   Genera media/alpha_evolution.gif
+
+SECONDS_PER_CLIP = 2
+FPS              = 30
+WIDTH, HEIGHT    = 640, 480
+CHECKPOINT_DIR   = "checkpoints/sac_alpha_cogv3"
+OUTPUT_GIF       = "media/alpha_evolution.gif"
+
+def add_label(frame, text, width=640):
+    img  = Image.fromarray(frame)
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([0, 0, width, 34], fill=(0, 0, 0, 180))
+    try:
+        font = ImageFont.truetype("arial.ttf", 22)
+    except Exception:
+        font = ImageFont.load_default()
+    draw.text((10, 6), text, fill=(255, 255, 255), font=font)
+    return np.array(img)
+
+# Patrón de checkpoints:
+pattern = os.path.join(CHECKPOINT_DIR, "sac2_checkpoint_*.pt")
+all_ckpts = sorted(
+    glob.glob(pattern),
+    key=lambda p: int(re.search(r"(\d+)\.pt$", p).group(1))
+)
+# Para cada checkpoint:
+#   actor.load_state_dict(ckpt["actor"])
+#   frames = record_clip(actor, env, renderer, cam, n_frames)
+#   frames = [add_label(f, f"Step {step:,}") for f in frames]
+#   all_frames.extend(frames)
+# imageio.mimsave(OUTPUT_GIF, all_frames, fps=FPS, loop=0)
+
+
+------------------------------------------------------------
+2. SWEEP EVAL — evalúa todos los checkpoints y rankea
+   Origen: tools/_obsoletos/sweep_eval.py
+   Idea: 5 episodios por checkpoint, imprime tabla reward/xvel/len
+------------------------------------------------------------
+
+# Uso:
+#   python tools/training/sweep_eval.py
+#   Salida: tabla por consola + "Best checkpoint: step X"
+
+EVAL_EPISODES = 5
+_CKPT_DIR = "checkpoints/sac_alpha_cogv3"
+
+ckpts = sorted(
+    [p for p in glob.glob(os.path.join(_CKPT_DIR, "sac2_checkpoint_*.pt"))
+     if re.search(r"_(\d+)\.pt$", p)],
+    key=lambda p: int(re.search(r"_(\d+)\.pt$", p).group(1))
+)
+
+print(f"{'Step':>12}  {'Avg Reward':>12}  {'Avg x-vel':>10}  {'Avg Ep Len':>10}")
+for ckpt_path in ckpts:
+    step = int(re.search(r"(\d+)\.pt$", ckpt_path).group(1))
+    # cargar actor, correr EVAL_EPISODES episodios
+    # acumular reward, x_velocity, episode_length
+    # imprimir fila
+    pass
+
+best = max(results, key=lambda x: x[1])
+print(f"Best: step {best[0]:,}  reward {best[1]:.1f}  x-vel {best[2]:+.3f}")
+
+
+------------------------------------------------------------
+3. NOTAS: main_sac_alpha_v1 / v2 / cogv2
+   Origen: main_sac_alpha_v1.py, main_sac_alpha_v2.py, main_sac_alpha_cogv2.py
+   Diferencias principales con cogv3:
+   - v1/v2/cogv2 usan XML path "robot/reverse_eng_v2/alpha_single.xml" (ya no existe)
+   - v2 usaba checkpoint dir "checkpoints/sac_alpha_v12_cog_apoyo"
+   - cogv2 usaba "checkpoints/sac_alpha_v13_cog_x2"
+   - No tenían penalización de pie plano (foot_flat_cost)
+   - No tenían debug de tilt/altura de pies
+   La versión activa y correcta es cogv3 (main_sac_alpha_cogv3.py)
+------------------------------------------------------------
