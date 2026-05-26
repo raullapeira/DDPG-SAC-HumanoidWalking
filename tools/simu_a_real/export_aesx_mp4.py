@@ -13,8 +13,9 @@ Usage:
         --out robot/simu_a_real/v2_depuracion/700k
 """
 import sys, os, csv, struct
-_HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, ".."))
+_HERE     = os.path.dirname(os.path.abspath(__file__))
+_ROOT     = os.path.dirname(os.path.dirname(_HERE))   # DDPG-SAC-HumanoidWalking/
+sys.path.insert(0, _ROOT)
 
 import numpy as np
 import torch
@@ -196,10 +197,14 @@ def draw_overlay(frame_bgr, step, n_steps, x_vel, up_z, servo_vals=None):
     return np.vstack([frame_bgr, panel])
 
 
-_CKPT_DIR  = os.path.join(_HERE, "..", "checkpoints", "sac_alpha_v13_cog_x2")
-_TEMPLATE  = os.path.join(_HERE, "..", "robot", "simu_a_real", "exportado_por_sw_ubtech.aesx")
-_XML       = os.path.join(_HERE, "..", "robot", "reverse_eng_v2", "alpha_single.xml")
-_OUT_DIR   = os.path.join(_HERE, "..", "robot", "simu_a_real", "v2_depuracion")
+# Etiqueta que identifica esta campaña de entrenamiento.
+# Debe coincidir con el sufijo de la carpeta media/ para poder asociar GIFs y vídeos.
+_MEDIA_LABEL = "07_cogv3_pie_plano_v2"
+
+_CKPT_DIR  = os.path.join(_ROOT, "checkpoints", "sac_alpha_cogv3")
+_TEMPLATE  = os.path.join(_ROOT, "robot", "simu_a_real", "01_pruebas_iniciales", "exportado_por_sw_ubtech.aesx")
+_XML       = os.path.join(_ROOT, "robot", "configs", "v2", "alpha_single.xml")
+_OUT_DIR   = os.path.join(_ROOT, "robot", "simu_a_real", _MEDIA_LABEL)
 _N_STEPS   = 10
 
 
