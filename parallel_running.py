@@ -4,9 +4,8 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 
 _XML_FIGHT = os.path.join(_HERE, "robot", "configs", "fighting", "alpha_fight.xml")
-
-_CKPT_R1 = os.path.join(_HERE, "checkpoints", "fighting", "r1")
-_CKPT_R2 = os.path.join(_HERE, "checkpoints", "fighting", "r2")
+_CKPT_R1   = os.path.join(_HERE, "checkpoints", "running_versus", "r1")
+_CKPT_R2   = os.path.join(_HERE, "checkpoints", "running_versus", "r2")
 os.makedirs(_CKPT_R1, exist_ok=True)
 os.makedirs(_CKPT_R2, exist_ok=True)
 
@@ -24,22 +23,23 @@ from fighting_env import FightingEnv
 
 _CSV_PATH  = os.path.join(_HERE, "training_log_fighting.csv")
 _TODAY     = datetime.date.today().strftime("%d_%m_%Y")
-_MEDIA_DIR = os.path.join(_HERE, "media", f"{_TODAY}_fighting")
+_MEDIA_DIR = os.path.join(_HERE, "media", f"{_TODAY}_parallel_race_non_stop")
 os.makedirs(_MEDIA_DIR, exist_ok=True)
 
 _GIF_SCRIPT = os.path.join(_HERE, "tools", "simu_a_real", "make_fighting_gif.py")
 
 if not os.path.exists(_CSV_PATH):
     with open(_CSV_PATH, mode="w", newline="") as f:
-        csv.writer(f).writerow(["step", "episode", "reward_r1", "reward_r2", "winner"])
+        csv.writer(f).writerow(["step", "episode", "reward_r1", "reward_r2",
+                                 "falls_r1", "falls_r2"])
 
-# ── Hyperparameters ───────────────────────────────────────────────────────────
+# ── Hyperparameters (copia exacta de walking.py) ──────────────────────────────
 LEARNING_RATE   = 3e-4
 GAMMA           = 0.99
 TAU             = 0.005
 BUFFER_SIZE     = int(1e6)
 BATCH_SIZE      = 256
-LEARNING_STARTS = 2000
+LEARNING_STARTS = 1000
 TOTAL_TIMESTEPS = 3_000_000
 SAVE_INTERVAL   = 50_000
 
@@ -47,18 +47,17 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 writer = SummaryWriter("runs/fighting")
 
 
-# ── Networks (hidden_dims configurable so each agent can differ) ──────────────
+# ── Redes (misma arquitectura que walking.py) ─────────────────────────────────
 
 class Actor(nn.Module):
-    def __init__(self, state_dim, action_dim, max_action, hidden_dims=(256, 256)):
+    def __init__(self, state_dim, action_dim, max_action):
         super().__init__()
-        layers, in_dim = [], state_dim
-        for h in hidden_dims:
-            layers += [nn.Linear(in_dim, h), nn.ReLU()]
-            in_dim = h
-        self.net     = nn.Sequential(*layers)
-        self.mu      = nn.Linear(in_dim, action_dim)
-        self.log_std = nn.Linear(in_dim, action_dim)
+        self.net = nn.Sequential(
+            nn.Linear(state_dim, 256), nn.ReLU(),
+            nn.Linear(256, 256), nn.ReLU(),
+        )
+        self.mu      = nn.Linear(256, action_dim)
+        self.log_std = nn.Linear(256, action_dim)
         self.max_action = max_action
 
     def forward(self, state):
@@ -78,18 +77,19 @@ class Actor(nn.Module):
 
 
 class Critic(nn.Module):
-    def __init__(self, state_dim, action_dim, hidden_dims=(256, 256)):
+    def __init__(self, state_dim, action_dim):
         super().__init__()
-        def make_q(in_d, hidden):
-            layers, d = [], in_d
-            for h in hidden:
-                layers += [nn.Linear(d, h), nn.ReLU()]
-                d = h
-            layers.append(nn.Linear(d, 1))
-            return nn.Sequential(*layers)
-        sa_dim = state_dim + action_dim
-        self.q1 = make_q(sa_dim, hidden_dims)
-        self.q2 = make_q(sa_dim, hidden_dims)
+        sa = state_dim + action_dim
+        self.q1 = nn.Sequential(
+            nn.Linear(sa, 256), nn.ReLU(),
+            nn.Linear(256, 256), nn.ReLU(),
+            nn.Linear(256, 1),
+        )
+        self.q2 = nn.Sequential(
+            nn.Linear(sa, 256), nn.ReLU(),
+            nn.Linear(256, 256), nn.ReLU(),
+            nn.Linear(256, 1),
+        )
 
     def forward(self, state, action):
         sa = torch.cat([state, action], dim=1)
@@ -118,27 +118,23 @@ class ReplayBuffer:
         return len(self.buffer)
 
 
-# ── SAC update (shared logic, called per agent) ───────────────────────────────
-
 def sac_update(actor, critic, critic_target, actor_opt, critic_opt, alpha_opt,
                log_alpha, target_entropy, buffer):
     if buffer.size() <= LEARNING_STARTS:
-        return
+        return None
 
     states, actions, rewards, next_states, dones = buffer.sample(BATCH_SIZE)
 
-    # alpha
     new_actions, log_pi = actor.sample(states)
     q1n, q2n = critic(states, new_actions)
+
     alpha_loss = -(log_alpha * (log_pi + target_entropy).detach()).mean()
     alpha_opt.zero_grad(); alpha_loss.backward(); alpha_opt.step()
     alpha = log_alpha.exp()
 
-    # actor
     actor_loss = (alpha * log_pi - torch.min(q1n, q2n)).mean()
     actor_opt.zero_grad(); actor_loss.backward(); actor_opt.step()
 
-    # critic target
     with torch.no_grad():
         na, nlog = actor.sample(next_states)
         q1t, q2t = critic_target(next_states, na)
@@ -148,23 +144,21 @@ def sac_update(actor, critic, critic_target, actor_opt, critic_opt, alpha_opt,
     critic_loss = nn.MSELoss()(q1, q_target) + nn.MSELoss()(q2, q_target)
     critic_opt.zero_grad(); critic_loss.backward(); critic_opt.step()
 
-    # polyak
     for p, tp in zip(critic.parameters(), critic_target.parameters()):
         tp.data.copy_(TAU * p.data + (1 - TAU) * tp.data)
 
-    return actor_loss.item(), critic_loss.item(), alpha_loss.item(), alpha.item()
+    return actor_loss.item(), critic_loss.item(), alpha.item()
 
 
-def save_checkpoint(path, step, actor, critic, critic_target,
-                    log_alpha, actor_opt, critic_opt, alpha_opt):
+def save_checkpoint(ckpt_dir, step, actor, critic, critic_target, log_alpha,
+                    actor_opt, critic_opt, alpha_opt):
     torch.save({
-        "actor": actor.state_dict(), "critic": critic.state_dict(),
+        "actor": actor.state_dict(),            "critic": critic.state_dict(),
         "critic_target": critic_target.state_dict(),
         "log_alpha": log_alpha,
-        "actor_opt": actor_opt.state_dict(),
-        "critic_opt": critic_opt.state_dict(),
+        "actor_opt": actor_opt.state_dict(),    "critic_opt": critic_opt.state_dict(),
         "alpha_opt": alpha_opt.state_dict(),
-    }, os.path.join(path, f"ckpt_{step}.pt"))
+    }, os.path.join(ckpt_dir, f"ckpt_{step}.pt"))
 
 
 def load_latest(ckpt_dir, actor, critic, critic_target, log_alpha,
@@ -187,38 +181,35 @@ def load_latest(ckpt_dir, actor, critic, critic_target, log_alpha,
     return int(files[-1].split("_")[-1].replace(".pt", ""))
 
 
-# ── Build env and agents ──────────────────────────────────────────────────────
+# ── Entorno y agentes ─────────────────────────────────────────────────────────
 
 env = FightingEnv(xml_path=_XML_FIGHT)
-obs_dim    = env.observation_space.shape[0]   # 34
-action_dim = 10                                # 10 leg joints per robot
+obs_dim    = env.observation_space.shape[0]   # 31 (igual que walking)
+action_dim = 10
 max_action = 1.0
 
-# Agent r1 — architecture A: 256×256
-actor_r1  = Actor(obs_dim, action_dim, max_action, hidden_dims=(256, 256)).to(device)
-critic_r1 = Critic(obs_dim, action_dim, hidden_dims=(256, 256)).to(device)
-critic_r1_target = Critic(obs_dim, action_dim, hidden_dims=(256, 256)).to(device)
+actor_r1  = Actor(obs_dim, action_dim, max_action).to(device)
+critic_r1 = Critic(obs_dim, action_dim).to(device)
+critic_r1_target = Critic(obs_dim, action_dim).to(device)
 critic_r1_target.load_state_dict(critic_r1.state_dict())
 actor_r1_opt  = optim.Adam(actor_r1.parameters(),  lr=LEARNING_RATE)
 critic_r1_opt = optim.Adam(critic_r1.parameters(), lr=LEARNING_RATE)
 log_alpha_r1  = torch.zeros(1, requires_grad=True, device=device)
 alpha_r1_opt  = optim.Adam([log_alpha_r1], lr=LEARNING_RATE)
 target_ent_r1 = -float(action_dim)
-buffer_r1 = ReplayBuffer()
+buffer_r1     = ReplayBuffer()
 
-# Agent r2 — architecture B: 512×256 (wider first layer)
-actor_r2  = Actor(obs_dim, action_dim, max_action, hidden_dims=(512, 256)).to(device)
-critic_r2 = Critic(obs_dim, action_dim, hidden_dims=(512, 256)).to(device)
-critic_r2_target = Critic(obs_dim, action_dim, hidden_dims=(512, 256)).to(device)
+actor_r2  = Actor(obs_dim, action_dim, max_action).to(device)
+critic_r2 = Critic(obs_dim, action_dim).to(device)
+critic_r2_target = Critic(obs_dim, action_dim).to(device)
 critic_r2_target.load_state_dict(critic_r2.state_dict())
 actor_r2_opt  = optim.Adam(actor_r2.parameters(),  lr=LEARNING_RATE)
 critic_r2_opt = optim.Adam(critic_r2.parameters(), lr=LEARNING_RATE)
 log_alpha_r2  = torch.zeros(1, requires_grad=True, device=device)
 alpha_r2_opt  = optim.Adam([log_alpha_r2], lr=LEARNING_RATE)
 target_ent_r2 = -float(action_dim)
-buffer_r2 = ReplayBuffer()
+buffer_r2     = ReplayBuffer()
 
-# Resume if checkpoints exist
 step_r1 = load_latest(_CKPT_R1, actor_r1, critic_r1, critic_r1_target,
                        log_alpha_r1, actor_r1_opt, critic_r1_opt, alpha_r1_opt)
 step_r2 = load_latest(_CKPT_R2, actor_r2, critic_r2, critic_r2_target,
@@ -228,17 +219,19 @@ global_step = max(step_r1, step_r2)
 if global_step > 0:
     print(f"Resumiendo desde step {global_step}")
 else:
-    print("Entrenamiento desde cero (fighting)")
+    print("Entrenamiento desde cero — dos robots hacia +X, resets independientes")
 
-# ── Training loop ─────────────────────────────────────────────────────────────
+# ── Bucle de entrenamiento ────────────────────────────────────────────────────
 
 episode = 0
 
 while global_step < TOTAL_TIMESTEPS:
     (obs_r1, obs_r2), _ = env.reset()
     ep_r1 = ep_r2 = 0.0
-    done = False
-    winner = "none"
+    falls_r1 = falls_r2 = 0
+    done = False   # solo True cuando truncated (max_steps)
+
+    _ep_lf1, _ep_rf1, _ep_lf2, _ep_rf2 = [], [], [], []
 
     while not done:
         global_step += 1
@@ -252,19 +245,25 @@ while global_step < TOTAL_TIMESTEPS:
         a1 = a1.cpu().numpy()[0]
         a2 = a2.cpu().numpy()[0]
 
-        actions = np.concatenate([a1, a2])
-        (next_r1, next_r2), (r1, r2), terminated, truncated, info = env.step(actions)
-        done = terminated or truncated
+        (next_r1, next_r2), (r1, r2), _terminated, truncated, info = env.step(
+            np.concatenate([a1, a2])
+        )
+        # El entorno nunca termina por caída — done solo cuando se agotan los pasos
+        done = truncated
 
-        ep_r1 += r1
-        ep_r2 += r2
+        ep_r1 += r1; ep_r2 += r2
+        if info["r1_fell"]: falls_r1 += 1
+        if info["r2_fell"]: falls_r2 += 1
+        _ep_lf1.append(info["r1_lf_tilt"]); _ep_rf1.append(info["r1_rf_tilt"])
+        _ep_lf2.append(info["r2_lf_tilt"]); _ep_rf2.append(info["r2_rf_tilt"])
 
-        buffer_r1.put((obs_r1, a1, r1, next_r1, float(done)))
-        buffer_r2.put((obs_r2, a2, r2, next_r2, float(done)))
-
+        # done por robot: cayó en este step O fin de episodio
+        done_r1 = info["r1_fell"] or truncated
+        done_r2 = info["r2_fell"] or truncated
+        buffer_r1.put((obs_r1, a1, r1, next_r1, float(done_r1)))
+        buffer_r2.put((obs_r2, a2, r2, next_r2, float(done_r2)))
         obs_r1, obs_r2 = next_r1, next_r2
 
-        # train both agents each step (independent learning)
         res1 = sac_update(actor_r1, critic_r1, critic_r1_target,
                           actor_r1_opt, critic_r1_opt, alpha_r1_opt,
                           log_alpha_r1, target_ent_r1, buffer_r1)
@@ -273,12 +272,12 @@ while global_step < TOTAL_TIMESTEPS:
                           log_alpha_r2, target_ent_r2, buffer_r2)
 
         if res1:
-            al1, cl1, aloss1, alpha1 = res1
+            al1, cl1, alpha1 = res1
             writer.add_scalar("R1/actor_loss",  al1,    global_step)
             writer.add_scalar("R1/critic_loss", cl1,    global_step)
             writer.add_scalar("R1/alpha",       alpha1, global_step)
         if res2:
-            al2, cl2, aloss2, alpha2 = res2
+            al2, cl2, alpha2 = res2
             writer.add_scalar("R2/actor_loss",  al2,    global_step)
             writer.add_scalar("R2/critic_loss", cl2,    global_step)
             writer.add_scalar("R2/alpha",       alpha2, global_step)
@@ -304,25 +303,28 @@ while global_step < TOTAL_TIMESTEPS:
                 stdout=_gif_log, stderr=_gif_log,
             )
 
-    if info["r1_fell"] and not info["r2_fell"]:
-        winner = "r2"
-    elif info["r2_fell"] and not info["r1_fell"]:
-        winner = "r1"
-    elif info["r1_fell"] and info["r2_fell"]:
-        winner = "double_ko"
+    def _avg(lst): return sum(lst) / len(lst) if lst else 0.0
 
-    writer.add_scalar("Reward/r1", ep_r1, global_step)
-    writer.add_scalar("Reward/r2", ep_r2, global_step)
-    writer.add_scalar("Fight/dist_final", info["dist"], global_step)
+    writer.add_scalar("Reward/r1",   ep_r1,    global_step)
+    writer.add_scalar("Reward/r2",   ep_r2,    global_step)
+    writer.add_scalar("Falls/r1",    falls_r1, global_step)
+    writer.add_scalar("Falls/r2",    falls_r2, global_step)
+    writer.add_scalar("Foot/r1_lf_tilt_avg", _avg(_ep_lf1), global_step)
+    writer.add_scalar("Foot/r1_rf_tilt_avg", _avg(_ep_rf1), global_step)
+    writer.add_scalar("Foot/r2_lf_tilt_avg", _avg(_ep_lf2), global_step)
+    writer.add_scalar("Foot/r2_rf_tilt_avg", _avg(_ep_rf2), global_step)
 
     print(
         f"Ep {episode:4d} | step {global_step:7d} | "
-        f"R1 {ep_r1:7.1f}  R2 {ep_r2:7.1f} | winner: {winner} | "
-        f"dist {info['dist']:.2f}m"
+        f"R1 {ep_r1:7.1f} (falls {falls_r1:3d})  "
+        f"R2 {ep_r2:7.1f} (falls {falls_r2:3d}) | "
+        f"tilt r1 L{_avg(_ep_lf1):.3f}/R{_avg(_ep_rf1):.3f}"
+        f"  r2 L{_avg(_ep_lf2):.3f}/R{_avg(_ep_rf2):.3f}"
     )
 
     with open(_CSV_PATH, mode="a", newline="") as f:
-        csv.writer(f).writerow([global_step, episode, ep_r1, ep_r2, winner])
+        csv.writer(f).writerow([global_step, episode, ep_r1, ep_r2,
+                                 falls_r1, falls_r2])
 
     episode += 1
 

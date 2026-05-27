@@ -20,8 +20,8 @@
     <geom name="floor" size="100 100 0.1" type="plane" material="groundplane"
           condim="3" friction="1 0.1 0.01"/>
 
-    <!-- ══════════════ ROBOT 1 (blue) — x=+0.5, faces -X toward center ══════════ -->
-    <body name="r1_root" pos="0.5 0 0.298" quat="0 0 0 1">
+    <!-- ══════════════ ROBOT 1 (blue) — y=-0.4, faces +X (same as r2) ══════════ -->
+    <body name="r1_root" pos="0 -0.4 0.298" quat="1 0 0 0">
       <freejoint name="r1_freejoint"/>
       <geom name="r1_Body_link_col0" type="box" size="0.045 0.0525 0.0535"
             pos="0 0 0" rgba="0.2 0.5 0.9 1" condim="3"/>
@@ -183,8 +183,8 @@
     </body>
     <!-- end r1_root -->
 
-    <!-- ══════════════ ROBOT 2 (red) — x=-0.5, faces +X toward center ═══════════ -->
-    <body name="r2_root" pos="-0.5 0 0.298" quat="1 0 0 0">
+    <!-- ══════════════ ROBOT 2 (red) — y=+0.4, faces +X (same as r1) ══════════ -->
+    <body name="r2_root" pos="0 0.4 0.298" quat="1 0 0 0">
       <freejoint name="r2_freejoint"/>
       <geom name="r2_Body_link_col0" type="box" size="0.045 0.0525 0.0535"
             pos="0 0 0" rgba="0.9 0.3 0.2 1" condim="3"/>
