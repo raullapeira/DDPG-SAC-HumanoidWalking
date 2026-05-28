@@ -3,9 +3,8 @@ import os
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 
-_XML_FIGHT = os.path.join(_HERE, "robot", "configs", "fighting", "alpha_fight.xml")
-_CKPT_R1   = os.path.join(_HERE, "checkpoints", "running_versus", "r1")
-_CKPT_R2   = os.path.join(_HERE, "checkpoints", "running_versus", "r2")
+_CKPT_R1   = os.path.join(_HERE, "checkpoints", "versus", "r1")
+_CKPT_R2   = os.path.join(_HERE, "checkpoints", "versus", "r2")
 os.makedirs(_CKPT_R1, exist_ok=True)
 os.makedirs(_CKPT_R2, exist_ok=True)
 
@@ -19,21 +18,21 @@ import csv
 import datetime
 import subprocess
 from torch.utils.tensorboard import SummaryWriter
-from fighting_env import FightingEnv
+from versus_env import VersusEnv
 
-_CSV_PATH  = os.path.join(_HERE, "training_log_fighting.csv")
+_CSV_PATH  = os.path.join(_HERE, "training_log_versus.csv")
 _TODAY     = datetime.date.today().strftime("%d_%m_%Y")
-_MEDIA_DIR = os.path.join(_HERE, "media", f"{_TODAY}_parallel_race_non_stop")
+_MEDIA_DIR = os.path.join(_HERE, "media", f"{_TODAY}_fighting_versus")
 os.makedirs(_MEDIA_DIR, exist_ok=True)
 
-_GIF_SCRIPT = os.path.join(_HERE, "tools", "simu_a_real", "make_fighting_gif.py")
+_GIF_SCRIPT = os.path.join(_HERE, "tools", "simu_a_real", "make_versus_gif.py")
 
 if not os.path.exists(_CSV_PATH):
     with open(_CSV_PATH, mode="w", newline="") as f:
         csv.writer(f).writerow(["step", "episode", "reward_r1", "reward_r2",
                                  "falls_r1", "falls_r2"])
 
-# ── Hyperparameters (copia exacta de walking.py) ──────────────────────────────
+# ── Hyperparameters ────────────────────────────────────────────────────────────
 LEARNING_RATE   = 3e-4
 GAMMA           = 0.99
 TAU             = 0.005
@@ -44,7 +43,7 @@ TOTAL_TIMESTEPS = 3_000_000
 SAVE_INTERVAL   = 50_000
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-writer = SummaryWriter("runs/fighting")
+writer = SummaryWriter("runs/versus")
 
 
 # ── Redes (misma arquitectura que walking.py) ─────────────────────────────────
@@ -183,8 +182,8 @@ def load_latest(ckpt_dir, actor, critic, critic_target, log_alpha,
 
 # ── Entorno y agentes ─────────────────────────────────────────────────────────
 
-env = FightingEnv(xml_path=_XML_FIGHT)
-obs_dim    = env.observation_space.shape[0]   # 31 (igual que walking)
+env = VersusEnv()
+obs_dim    = env.observation_space.shape[0]   # 34 (31 walking + 3 vector al oponente)
 action_dim = 10
 max_action = 1.0
 
@@ -219,7 +218,7 @@ global_step = max(step_r1, step_r2)
 if global_step > 0:
     print(f"Resumiendo desde step {global_step}")
 else:
-    print("Entrenamiento desde cero — dos robots hacia +X, resets independientes")
+    print("Entrenamiento desde cero — robots enfrentados, resets independientes, obs_dim=34")
 
 # ── Bucle de entrenamiento ────────────────────────────────────────────────────
 
@@ -229,14 +228,15 @@ while global_step < TOTAL_TIMESTEPS:
     (obs_r1, obs_r2), _ = env.reset()
     ep_r1 = ep_r2 = 0.0
     falls_r1 = falls_r2 = 0
-    done = False   # solo True cuando truncated (max_steps)
+    done = False
 
     _ep_lf1, _ep_rf1, _ep_lf2, _ep_rf2 = [], [], [], []
-    # Diagnósticos para detectar bugs al introducir espejo/enfrentamiento
-    _ep_vx1, _ep_vx2       = [], []   # velocidad X mundo — debe ser >0 si anda bien hacia +X
-    _ep_fwd1, _ep_fwd2     = [], []   # componente forward_reward — si ~0 el reward de avance no funciona
-    _ep_lat_l1, _ep_lat_r1 = [], []   # ángulo lateral cadera L/R robot 1 — valores altos = abre pierna
-    _ep_lat_l2, _ep_lat_r2 = [], []   # ángulo lateral cadera L/R robot 2
+    _ep_app1, _ep_app2   = [], []   # approach velocity — debe ser >0 si anda hacia el rival
+    _ep_vx1,  _ep_vx2    = [], []   # vx mundo — diagnóstico de bugs de espejo
+    _ep_fwd1, _ep_fwd2   = [], []   # componente forward_reward
+    _ep_lat_l1, _ep_lat_r1 = [], []
+    _ep_lat_l2, _ep_lat_r2 = [], []
+    _ep_dist             = []       # distancia entre robots
 
     while not done:
         global_step += 1
@@ -253,7 +253,6 @@ while global_step < TOTAL_TIMESTEPS:
         (next_r1, next_r2), (r1, r2), _terminated, truncated, info = env.step(
             np.concatenate([a1, a2])
         )
-        # El entorno nunca termina por caída — done solo cuando se agotan los pasos
         done = truncated
 
         ep_r1 += r1; ep_r2 += r2
@@ -261,12 +260,13 @@ while global_step < TOTAL_TIMESTEPS:
         if info["r2_fell"]: falls_r2 += 1
         _ep_lf1.append(info["r1_lf_tilt"]); _ep_rf1.append(info["r1_rf_tilt"])
         _ep_lf2.append(info["r2_lf_tilt"]); _ep_rf2.append(info["r2_rf_tilt"])
-        _ep_vx1.append(info["r1_x_velocity"]); _ep_vx2.append(info["r2_x_velocity"])
-        _ep_fwd1.append(info["r1_fwd_rew"]);   _ep_fwd2.append(info["r2_fwd_rew"])
-        _ep_lat_l1.append(info["r1_lat_L"]);   _ep_lat_r1.append(info["r1_lat_R"])
-        _ep_lat_l2.append(info["r2_lat_L"]);   _ep_lat_r2.append(info["r2_lat_R"])
+        _ep_app1.append(info["r1_approach_vel"]); _ep_app2.append(info["r2_approach_vel"])
+        _ep_vx1.append(info["r1_x_velocity"]);    _ep_vx2.append(info["r2_x_velocity"])
+        _ep_fwd1.append(info["r1_fwd_rew"]);       _ep_fwd2.append(info["r2_fwd_rew"])
+        _ep_lat_l1.append(info["r1_lat_L"]);       _ep_lat_r1.append(info["r1_lat_R"])
+        _ep_lat_l2.append(info["r2_lat_L"]);       _ep_lat_r2.append(info["r2_lat_R"])
+        _ep_dist.append(info["dist"])
 
-        # done por robot: cayó en este step O fin de episodio
         done_r1 = info["r1_fell"] or truncated
         done_r2 = info["r2_fell"] or truncated
         buffer_r1.put((obs_r1, a1, r1, next_r1, float(done_r1)))
@@ -317,21 +317,24 @@ while global_step < TOTAL_TIMESTEPS:
     writer.add_scalar("Reward/r2",   ep_r2,    global_step)
     writer.add_scalar("Falls/r1",    falls_r1, global_step)
     writer.add_scalar("Falls/r2",    falls_r2, global_step)
+    writer.add_scalar("Dist/avg",    _avg(_ep_dist), global_step)
     writer.add_scalar("Foot/r1_lf_tilt_avg", _avg(_ep_lf1), global_step)
     writer.add_scalar("Foot/r1_rf_tilt_avg", _avg(_ep_rf1), global_step)
     writer.add_scalar("Foot/r2_lf_tilt_avg", _avg(_ep_lf2), global_step)
     writer.add_scalar("Foot/r2_rf_tilt_avg", _avg(_ep_rf2), global_step)
-    # Diagnósticos para detectar bugs de espejo — útiles antes de implementar fighting
-    writer.add_scalar("Diag/r1_vx_avg",      _avg(_ep_vx1),    global_step)
-    writer.add_scalar("Diag/r2_vx_avg",      _avg(_ep_vx2),    global_step)
-    writer.add_scalar("Diag/r1_fwd_rew_avg", _avg(_ep_fwd1),   global_step)
-    writer.add_scalar("Diag/r2_fwd_rew_avg", _avg(_ep_fwd2),   global_step)
-    writer.add_scalar("Diag/r1_lat_thigh_L", _avg(_ep_lat_l1), global_step)
-    writer.add_scalar("Diag/r1_lat_thigh_R", _avg(_ep_lat_r1), global_step)
-    writer.add_scalar("Diag/r2_lat_thigh_L", _avg(_ep_lat_l2), global_step)
-    writer.add_scalar("Diag/r2_lat_thigh_R", _avg(_ep_lat_r2), global_step)
+    # Velocidad de aproximación — métrica principal del versus
+    writer.add_scalar("Diag/r1_approach_avg", _avg(_ep_app1),   global_step)
+    writer.add_scalar("Diag/r2_approach_avg", _avg(_ep_app2),   global_step)
+    # vx mundo — diagnóstico de bugs de espejo (r1 debe ser negativo, r2 positivo)
+    writer.add_scalar("Diag/r1_vx_avg",       _avg(_ep_vx1),    global_step)
+    writer.add_scalar("Diag/r2_vx_avg",       _avg(_ep_vx2),    global_step)
+    writer.add_scalar("Diag/r1_fwd_rew_avg",  _avg(_ep_fwd1),   global_step)
+    writer.add_scalar("Diag/r2_fwd_rew_avg",  _avg(_ep_fwd2),   global_step)
+    writer.add_scalar("Diag/r1_lat_thigh_L",  _avg(_ep_lat_l1), global_step)
+    writer.add_scalar("Diag/r1_lat_thigh_R",  _avg(_ep_lat_r1), global_step)
+    writer.add_scalar("Diag/r2_lat_thigh_L",  _avg(_ep_lat_l2), global_step)
+    writer.add_scalar("Diag/r2_lat_thigh_R",  _avg(_ep_lat_r2), global_step)
 
-    # Alerta: ángulo lateral de cadera > 0.4 rad (~23°) es síntoma del bug de espejo
     lat_warn = ""
     for name, vals in [("r1L", _ep_lat_l1), ("r1R", _ep_lat_r1),
                         ("r2L", _ep_lat_l2), ("r2R", _ep_lat_r2)]:
@@ -342,8 +345,8 @@ while global_step < TOTAL_TIMESTEPS:
         f"Ep {episode:4d} | step {global_step:7d} | "
         f"R1 {ep_r1:7.1f} (falls {falls_r1:3d})  "
         f"R2 {ep_r2:7.1f} (falls {falls_r2:3d}) | "
-        f"vx r1={_avg(_ep_vx1):.2f} r2={_avg(_ep_vx2):.2f} | "
-        f"fwd r1={_avg(_ep_fwd1):.2f} r2={_avg(_ep_fwd2):.2f}"
+        f"app r1={_avg(_ep_app1):.2f} r2={_avg(_ep_app2):.2f} | "
+        f"dist={_avg(_ep_dist):.2f}"
         + (f" |{lat_warn}" if lat_warn else "")
     )
 
