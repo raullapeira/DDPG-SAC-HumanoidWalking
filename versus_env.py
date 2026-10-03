@@ -14,6 +14,13 @@ _FRAME_SKIP    = 5
 _ACTION_REPEAT = 4
 _MAX_STEPS     = 1000
 
+# Distancia (raíz-raíz, XY) a la que frenamos en seco a ambos robots para que
+# no sigan cerrando distancia hasta chocar/tropezar. 0.12-0.15m se quedaban
+# cortos: los robots se cruzaban/pasaban de largo el uno junto al otro y
+# tropezaban antes de que el freno surtiera efecto. Con mas margen (0.20m)
+# hay tiempo de sobra para detectar y frenar antes de que se toquen.
+_STOP_DIST     = 0.20
+
 # Pesos de recompensa — copia exacta de walking_env.py
 _CTRL_COST_WEIGHT      = 0.01
 _FORWARD_WEIGHT        = 5.0     # aplicado sobre approach_velocity, no world-X
@@ -148,7 +155,7 @@ class VersusEnv(gym.Env):
 
     def _robot_reward(self, qpos, qvel, a, qpos_off, qvel_off,
                       lf_id, rf_id, com_id, lank, rank, lfeet, rfeet,
-                      approach_vel, robot_pos_2d, unit_to_opp_2d):
+                      approach_vel, robot_pos_2d, unit_to_opp_2d, dist_2d):
         """Reward idéntico a walking_env pero con approach_velocity en lugar de world-X.
         El pie trasero/delantero se determina por proyección sobre la dirección al oponente,
         lo que es correcto para CUALQUIER orientación del robot."""
@@ -178,7 +185,8 @@ class VersusEnv(gym.Env):
 
         # ── Reward principal: avanzar hacia el oponente ───────────────────────
         forward_reward     = _FORWARD_WEIGHT * max(0.0, approach_vel)
-        slow_penalty       = _SLOW_PENALTY   if approach_vel < 0.02 else 0.0
+        # Dentro de _STOP_DIST no penalizamos ir despacio/parado — ya han llegado.
+        slow_penalty       = _SLOW_PENALTY if (approach_vel < 0.02 and dist_2d > _STOP_DIST) else 0.0
 
         upright_reward     = _UPRIGHT_WEIGHT * up_z
         ctrl_cost          = _CTRL_COST_WEIGHT * float(np.sum(np.square(a)))
@@ -263,6 +271,16 @@ class VersusEnv(gym.Env):
             self.data.ctrl[:] = ctrl
             for _ in range(_FRAME_SKIP):
                 mujoco.mj_step(self.model, self.data)
+                # Freno automático: en cuanto los troncos están a <= _STOP_DIST,
+                # anulamos la velocidad horizontal de cada raíz en CADA substep.
+                # Así dejan de acercarse en el momento exacto en que llegan a rango,
+                # en vez de esperar a que la política haya aprendido a frenar sola
+                # (lo que antes les dejaba seguir con inercia hasta tropezar/chocar).
+                r1_xy = self.data.xpos[self._r1_id][:2]
+                r2_xy = self.data.xpos[self._r2_id][:2]
+                if float(np.linalg.norm(r1_xy - r2_xy)) <= _STOP_DIST:
+                    self.data.qvel[0:6]   = 0.0
+                    self.data.qvel[22:28] = 0.0
             self.data.qpos[self._r1_arm_qpos] = 0.0
             self.data.qvel[self._r1_arm_qvel] = 0.0
             self.data.qpos[self._r2_arm_qpos] = 0.0
@@ -299,13 +317,13 @@ class VersusEnv(gym.Env):
             qpos, qvel, a1, 0, 0,
             self._r1_lf_id, self._r1_rf_id, self._r1_id,
             self._r1_lank, self._r1_rank, self._r1_lfeet, self._r1_rfeet,
-            approach_r1, r1_pos[:2], unit_12,
+            approach_r1, r1_pos[:2], unit_12, dist_2d,
         )
         reward_2, info2 = self._robot_reward(
             qpos, qvel, a2, 23, 22,
             self._r2_lf_id, self._r2_rf_id, self._r2_id,
             self._r2_lank, self._r2_rank, self._r2_lfeet, self._r2_rfeet,
-            approach_r2, r2_pos[:2], -unit_12,
+            approach_r2, r2_pos[:2], -unit_12, dist_2d,
         )
 
         # Reset individual del robot caído
@@ -323,6 +341,7 @@ class VersusEnv(gym.Env):
         info = {
             "r1_fell":          r1_fell,                     "r2_fell":          r2_fell,
             "dist":             dist_2d,
+            "stopped":          dist_2d <= _STOP_DIST,
             "r1_approach_vel":  info1["approach_vel"],        "r2_approach_vel":  info2["approach_vel"],
             "r1_x_velocity":    info1["x_velocity"],          "r2_x_velocity":    info2["x_velocity"],
             "r1_lf_tilt":       info1["lf_tilt"],             "r1_rf_tilt":       info1["rf_tilt"],

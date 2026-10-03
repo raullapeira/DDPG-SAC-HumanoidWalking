@@ -1,0 +1,8 @@
+sim,seed,start_dist,lateral,yaw_r1,yaw_r2,fight_ckpt,nombre,andar_s,combate_s,resultado,golpes_r1,golpes_r2,gif
+1,4,1.2,0.0,0.0,0.0,ultima,base,1.5,2.6,ko_r1,3,24,sim01_base_ko_r1_golpes3-24.gif
+2,6,1.2,0.0,0.0,0.0,ultima,otra_semilla,1.5,2.1,ko_r1,4,3,sim02_otra_semilla_ko_r1_golpes4-3.gif
+3,4,0.8,0.0,0.0,0.0,ultima,muy_cerca,1.0,5.5,ambos_caidos,10,29,sim03_muy_cerca_ambos_caidos_golpes10-29.gif
+5,4,2.0,0.0,0.0,0.0,ultima,dist_entrenamiento,3.0,4.9,ko_r2,6,5,sim05_dist_entrenamiento_ko_r2_golpes6-5.gif
+7,4,1.2,0.0,15.0,0.0,ultima,r1_girado,1.4,2.3,ko_r1,4,3,sim07_r1_girado_ko_r1_golpes4-3.gif
+8,4,1.2,0.0,-10.0,10.0,ultima,ambos_girados,1.5,10.3,ko_r1,13,122,sim08_ambos_girados_ko_r1_golpes13-122.gif
+9,4,1.2,0.0,0.0,0.0,250000,combate_250k,1.5,3.6,ko_r1,6,7,sim09_combate_250k_ko_r1_golpes6-7.gif

@@ -103,6 +103,7 @@
                   pos="0 0.0425 0" quat="0.707105 0 -0.707108 0" rgba="0.2 0.5 0.9 1" condim="3"/>
             <inertial pos="0 0 0" mass="0.02"
                       diaginertia="1.4083e-05 4.708e-06 1.4708e-05"/>
+            <site name="r1_lh_site" type="box" pos="0 0.0425 0" size="0.023 0.046 0.023" rgba="1 1 0 0.5"/>
           </body>
         </body>
       </body>
@@ -176,6 +177,7 @@
                   pos="0 -0.0425 0" quat="0.707105 0 -0.707108 0" rgba="0.2 0.5 0.9 1" condim="3"/>
             <inertial pos="0 0 0" mass="0.02"
                       diaginertia="1.4083e-05 4.708e-06 1.4708e-05"/>
+            <site name="r1_rh_site" type="box" pos="0 -0.0425 0" size="0.023 0.046 0.023" rgba="1 1 0 0.5"/>
           </body>
         </body>
       </body>
@@ -266,6 +268,7 @@
                   pos="0 0.0425 0" quat="0.707105 0 -0.707108 0" rgba="0.9 0.3 0.2 1" condim="3"/>
             <inertial pos="0 0 0" mass="0.02"
                       diaginertia="1.4083e-05 4.708e-06 1.4708e-05"/>
+            <site name="r2_lh_site" type="box" pos="0 0.0425 0" size="0.023 0.046 0.023" rgba="1 0.5 0 0.5"/>
           </body>
         </body>
       </body>
@@ -339,6 +342,7 @@
                   pos="0 -0.0425 0" quat="0.707105 0 -0.707108 0" rgba="0.9 0.3 0.2 1" condim="3"/>
             <inertial pos="0 0 0" mass="0.02"
                       diaginertia="1.4083e-05 4.708e-06 1.4708e-05"/>
+            <site name="r2_rh_site" type="box" pos="0 -0.0425 0" size="0.023 0.046 0.023" rgba="1 0.5 0 0.5"/>
           </body>
         </body>
       </body>
@@ -347,6 +351,29 @@
     <!-- end r2_root -->
 
   </worldbody>
+
+  <!-- Autocolisiones mano/antebrazo con el propio cuerpo: con el brazo bajado
+       la mano se mete dentro del propio muslo, y en otras posturas toca la
+       propia cabeza o torso. Bloqueaban el movimiento del brazo y ademas el
+       sensor de contacto las contaba como "golpe" (contra uno mismo). -->
+  <contact>
+    <exclude body1="r1_Left_Hand_link"  body2="r1_Left_Lateral_Thigh_link"/>
+    <exclude body1="r1_Left_Hand_link"  body2="r1_Left_Thigt_link"/>
+    <exclude body1="r1_Left_Hand_link"  body2="r1_root"/>
+    <exclude body1="r1_Left_Hand_link"  body2="r1_Head_link"/>
+    <exclude body1="r1_Right_Hand_link" body2="r1_Right_Lateral_Thigh_link"/>
+    <exclude body1="r1_Right_Hand_link" body2="r1_Right_Thigh_link"/>
+    <exclude body1="r1_Right_Hand_link" body2="r1_root"/>
+    <exclude body1="r1_Right_Hand_link" body2="r1_Head_link"/>
+    <exclude body1="r2_Left_Hand_link"  body2="r2_Left_Lateral_Thigh_link"/>
+    <exclude body1="r2_Left_Hand_link"  body2="r2_Left_Thigt_link"/>
+    <exclude body1="r2_Left_Hand_link"  body2="r2_root"/>
+    <exclude body1="r2_Left_Hand_link"  body2="r2_Head_link"/>
+    <exclude body1="r2_Right_Hand_link" body2="r2_Right_Lateral_Thigh_link"/>
+    <exclude body1="r2_Right_Hand_link" body2="r2_Right_Thigh_link"/>
+    <exclude body1="r2_Right_Hand_link" body2="r2_root"/>
+    <exclude body1="r2_Right_Hand_link" body2="r2_Head_link"/>
+  </contact>
 
   <actuator>
     <!-- r1 Left leg  (ctrl idx 0-4) -->
@@ -423,5 +450,12 @@
     <position name="r2_act_Right_Hand"          joint="r2_Right_Hand_link_joint"
               kp="20" kv="10" ctrlrange="-1.57 1.57"  forcerange="-1.5 1.5"/>
   </actuator>
+
+  <sensor>
+    <touch name="r1_lh_touch" site="r1_lh_site"/>
+    <touch name="r1_rh_touch" site="r1_rh_site"/>
+    <touch name="r2_lh_touch" site="r2_lh_site"/>
+    <touch name="r2_rh_touch" site="r2_rh_site"/>
+  </sensor>
 
 </mujoco>

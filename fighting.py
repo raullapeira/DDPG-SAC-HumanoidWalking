@@ -1,10 +1,27 @@
 import sys
 import os
-_HERE = os.path.dirname(os.path.abspath(__file__))
+import glob
+import datetime
+_HERE  = os.path.dirname(os.path.abspath(__file__))
+_TODAY = datetime.date.today().strftime("%Y_%m_%d")
 sys.path.insert(0, _HERE)
 
-_CKPT_R1   = os.path.join(_HERE, "checkpoints", "versus", "r1")
-_CKPT_R2   = os.path.join(_HERE, "checkpoints", "versus", "r2")
+_RUN_TAG = "versus_stop_dist"
+
+# La carpeta de checkpoints lleva la fecha de INICIO del entrenamiento, no la
+# del día en que se relanza el script. Si ya existe una carpeta con
+# checkpoints guardados, reutilizamos esa (para poder resumir entre días);
+# si no hay ninguna todavía, hoy es el día de inicio. Fecha primero (YYYY_MM_DD)
+# para que las carpetas ordenen cronológicamente.
+_CKPT_BASE     = os.path.join(_HERE, "checkpoints")
+_existing_ckpt = sorted(glob.glob(os.path.join(_CKPT_BASE, f"*_{_RUN_TAG}", "r1", "*.pt")))
+if _existing_ckpt:
+    _RUN_DATE = os.path.basename(os.path.dirname(os.path.dirname(_existing_ckpt[-1]))).replace(f"_{_RUN_TAG}", "")
+else:
+    _RUN_DATE = _TODAY
+
+_CKPT_R1   = os.path.join(_CKPT_BASE, f"{_RUN_DATE}_{_RUN_TAG}", "r1")
+_CKPT_R2   = os.path.join(_CKPT_BASE, f"{_RUN_DATE}_{_RUN_TAG}", "r2")
 os.makedirs(_CKPT_R1, exist_ok=True)
 os.makedirs(_CKPT_R2, exist_ok=True)
 
@@ -15,14 +32,12 @@ import numpy as np
 from collections import deque
 import random
 import csv
-import datetime
 import subprocess
 from torch.utils.tensorboard import SummaryWriter
-from versus_env import VersusEnv
+from versus_env import VersusEnv, _STOP_DIST
 
-_CSV_PATH  = os.path.join(_HERE, "training_log_versus.csv")
-_TODAY     = datetime.date.today().strftime("%d_%m_%Y")
-_MEDIA_DIR = os.path.join(_HERE, "media", f"{_TODAY}_fighting_versus")
+_CSV_PATH  = os.path.join(_HERE, "training_log_versus_stop_dist.csv")
+_MEDIA_DIR = os.path.join(_HERE, "media", f"{_TODAY}_freno_auto_stop_dist_desde_cero")
 os.makedirs(_MEDIA_DIR, exist_ok=True)
 
 _GIF_SCRIPT = os.path.join(_HERE, "tools", "simu_a_real", "make_versus_gif.py")
@@ -42,8 +57,16 @@ LEARNING_STARTS = 1000
 TOTAL_TIMESTEPS = 3_000_000
 SAVE_INTERVAL   = 50_000
 
+# ── Objetivo / parada automática ───────────────────────────────────────────────
+# Paramos en cuanto, de forma sostenida, los robots (a) llegan a rango de frenado
+# y (b) casi no se caen. Evita seguir entrenando cientos de miles de steps sin
+# aportar nada una vez alcanzado el comportamiento buscado.
+_GOAL_WINDOW    = 30                 # episodios consecutivos que deben cumplirlo
+_GOAL_MAX_FALLS = 1.0                # caidas totales (r1+r2) medias por episodio
+_GOAL_MAX_DIST  = _STOP_DIST + 0.15  # deben llegar de verdad cerca de _STOP_DIST
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-writer = SummaryWriter("runs/versus")
+writer = SummaryWriter("runs/versus_stop_dist")
 
 
 # ── Redes (misma arquitectura que walking.py) ─────────────────────────────────
@@ -223,6 +246,8 @@ else:
 # ── Bucle de entrenamiento ────────────────────────────────────────────────────
 
 episode = 0
+_falls_hist   = deque(maxlen=_GOAL_WINDOW)   # caidas totales por episodio
+_mindist_hist = deque(maxlen=_GOAL_WINDOW)   # distancia minima alcanzada por episodio
 
 while global_step < TOTAL_TIMESTEPS:
     (obs_r1, obs_r2), _ = env.reset()
@@ -353,6 +378,26 @@ while global_step < TOTAL_TIMESTEPS:
     with open(_CSV_PATH, mode="a", newline="") as f:
         csv.writer(f).writerow([global_step, episode, ep_r1, ep_r2,
                                  falls_r1, falls_r2])
+
+    # ── Comprobación de objetivo alcanzado ─────────────────────────────────
+    _falls_hist.append(falls_r1 + falls_r2)
+    _mindist_hist.append(min(_ep_dist) if _ep_dist else float("inf"))
+
+    if len(_falls_hist) == _GOAL_WINDOW:
+        _avg_falls   = sum(_falls_hist)   / _GOAL_WINDOW
+        _avg_mindist = sum(_mindist_hist) / _GOAL_WINDOW
+        if _avg_falls <= _GOAL_MAX_FALLS and _avg_mindist <= _GOAL_MAX_DIST:
+            print(
+                f"\nObjetivo alcanzado en step {global_step}: "
+                f"media de {_GOAL_WINDOW} episodios — caidas={_avg_falls:.2f}, "
+                f"dist_min={_avg_mindist:.2f} (<= {_GOAL_MAX_DIST:.2f}). "
+                f"Deteniendo entrenamiento."
+            )
+            save_checkpoint(_CKPT_R1, global_step, actor_r1, critic_r1, critic_r1_target,
+                            log_alpha_r1, actor_r1_opt, critic_r1_opt, alpha_r1_opt)
+            save_checkpoint(_CKPT_R2, global_step, actor_r2, critic_r2, critic_r2_target,
+                            log_alpha_r2, actor_r2_opt, critic_r2_opt, alpha_r2_opt)
+            break
 
     episode += 1
 
